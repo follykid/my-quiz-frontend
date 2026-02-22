@@ -637,13 +637,13 @@ if (gameOver) {
         <div className="score-p2">{scores.p2}{streaks.p2 >= 3 && <span className="combo">🔥{streaks.p2}</span>}</div>
       </div>
 
-      <style>{`
-        .game-container { height: 100vh; width: 100vw; background: #000; color: white; display: flex; flex-direction: column; overflow: hidden; }
+<style>{`
+        .game-container { height: 100dvh; width: 100vw; background: #000; color: white; display: flex; flex-direction: column; overflow: hidden; }
         .header { height: 12%; display: flex; justify-content: space-between; align-items: center; padding: 0 20px; border-bottom: 2px solid #333; }
         .timer { font-size: 2rem; font-weight: bold; }
         .player-info { font-size: 0.8rem; transition: opacity 0.3s; }
         .player-info.done { opacity: 1; font-weight: bold; }
-        .main-area { flex: 1; display: flex; flex-direction: column; padding: 15px; overflow-y: auto; }
+        .main-area { flex: 1; display: flex; flex-direction: column; padding: 15px; overflow-y: auto; min-height: 0; }
         .question-box { background: #111; padding: 15px; border-radius: 15px; text-align: center; margin-bottom: 15px; border: 1px solid #333; }
         .question-text { font-size: 1.4rem; font-weight: bold; margin-top: 5px; }
         .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: 1; }
