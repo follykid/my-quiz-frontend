@@ -151,13 +151,27 @@ function App() {
   const [shuffledOptions, setShuffledOptions] = useState([]);
   const [p2Joined, setP2Joined] = useState(false);
 
+  // 🛡️ 新增：防止遊戲中途跳出的監聽邏輯
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      // 只有在房間內、不是老師(viewer)、且遊戲還沒結束時才警告
+      if (roomId && myRole !== 'viewer' && !gameOver) {
+        e.preventDefault();
+        e.returnValue = '遊戲正在進行中，離開將判定為斷線失敗！';
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [roomId, myRole, gameOver]);
+
   useEffect(() => {
     bgmRef.current = new Audio('/bgm.mp3'); 
     bgmRef.current.loop = true;
     bgmRef.current.volume = 0.4;
   }, []);
 
-  // 💡 修改：加上 currentTime = 0，確保每次戰鬥都從頭開始播
   const startBGM = () => { 
       if (bgmRef.current) {
           bgmRef.current.currentTime = 0; 
@@ -331,7 +345,6 @@ function App() {
               set(userRef, { name: student.name, totalWins: 0, totalScore: 0, energy: 10, lastLoginDate: today });
           }
           setUser(student); 
-          // 💡 已經把這裡的 startBGM() 移除了！大廳不會播音樂了。
       });
     } else { alert("登入失敗！"); }
   };
@@ -340,7 +353,7 @@ function App() {
     if (user.id === "teacher") {
         setMyRole('viewer');
         setRoomId(selectedRoomId);
-        startBGM(); // 💡 加入音樂：老師進房巡堂時開始播放
+        startBGM();
         return;
     }
 
@@ -355,13 +368,13 @@ function App() {
       const data = snapshot.val() || {};
       if (!data.p1Present) {
         setMyRole('p1'); setRoomId(selectedRoomId);
-        startBGM(); // 💡 加入音樂：P1 進房時開始播放
+        startBGM();
         set(roomRef, { p1Present: true, names: { p1: user.name, p2: "等待中..." }, playerIds: { p1: user.id, p2: null }, currentIdx: 0, scores: { p1: 0, p2: 0 }, streaks: { p1: 0, p2: 0 }, selections: { p1: null, p2: null }, timeLeft: 30, showResult: false, gameOver: false, statsSaved: false });
         onDisconnect(ref(db, `rooms/${selectedRoomId}/p1Present`)).remove(); onDisconnect(ref(db, `rooms/${selectedRoomId}/names/p1`)).set("斷線");
       } 
       else if (!data.p2Present) {
         setMyRole('p2'); setRoomId(selectedRoomId);
-        startBGM(); // 💡 加入音樂：P2 進房時開始播放
+        startBGM();
         update(roomRef, { p2Present: true, "names/p2": user.name, "playerIds/p2": user.id, timeLeft: 30 });
         onDisconnect(ref(db, `rooms/${selectedRoomId}/p2Present`)).remove(); onDisconnect(ref(db, `rooms/${selectedRoomId}/names/p2`)).set("斷線");
       } 
@@ -437,7 +450,6 @@ function App() {
           })}
         </div>
 
-        {/* 🌟 整合留言板 🌟 */}
         <ChatBoard currentUser={user.name} />
 
         <style>{`
@@ -541,7 +553,6 @@ function App() {
         .question-box { background: #111; padding: 15px; border-radius: 15px; text-align: center; margin-bottom: 15px; border: 1px solid #333; }
         .question-text { font-size: 1.4rem; font-weight: bold; margin-top: 5px; }
         
-        /* 🌟 響應式選項佈局：手機直拿會變成 1x4 🌟 */
         .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: 1; }
         @media (max-width: 768px) { .options-grid { grid-template-columns: 1fr; } }
         
