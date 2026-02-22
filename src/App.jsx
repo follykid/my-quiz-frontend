@@ -506,35 +506,59 @@ function App() {
 
   const getBtnStyle = (idx) => {
     let bgColor = '#222';
+    let borderColor = '#444'; // 新增邊框顏色變數，預設為暗灰
+
     if (showResult) {
+        // 開獎後：顯示正確答案(綠)與雙方選擇(紅)，並亮白框
         bgColor = shuffledOptions[idx]?.isCorrect ? '#22c55e' : (mySelIdx === idx || selections?.p1?.idx === idx || selections?.p2?.idx === idx ? '#ef4444' : '#333');
+        borderColor = (selections?.p1?.idx === idx || selections?.p2?.idx === idx) ? '#fff' : '#444';
     } else {
+        // 還沒開獎時
         if (myRole === 'viewer') {
+            // 老師視角：可以看見雙方選擇
             if (selections?.p1?.idx === idx) bgColor = '#1e40af';
             if (selections?.p2?.idx === idx) bgColor = '#991b1b';
+            borderColor = (selections?.p1?.idx === idx || selections?.p2?.idx === idx) ? '#fff' : '#444';
         } else {
+            // 🔒 玩家視角：絕對防作弊，背景與邊框都只能看到「自己」選的
             bgColor = mySelIdx === idx ? '#3b82f6' : '#222';
+            borderColor = mySelIdx === idx ? '#fff' : '#444'; 
         }
     }
-    return { backgroundColor: bgColor, border: (selections?.p1?.idx === idx || selections?.p2?.idx === idx) ? '3px solid #fff' : '1px solid #444' };
+    // 統一返回樣式
+    return { backgroundColor: bgColor, border: `3px solid ${borderColor}` };
   };
 
- if (gameOver) {
+if (gameOver) {
     let resultTitle = "";
     let subMessage = "";
     let titleColor = "#fbbf24"; // 平手預設黃色
 
-    if (scores.p1 > scores.p2) {
-      resultTitle = `🎉 恭喜 ${names.p1} 獲勝！ 🎉`;
-      subMessage = `不要灰心 ${names.p2}，再接再厲下次一定贏！ 💪`;
-      titleColor = "#60a5fa"; // P1 贏用藍色
-    } else if (scores.p2 > scores.p1) {
-      resultTitle = `🎉 恭喜 ${names.p2} 獲勝！ 🎉`;
-      subMessage = `不要灰心 ${names.p1}，再接再厲下次一定贏！ 💪`;
-      titleColor = "#f87171"; // P2 贏用紅色
-    } else {
+    // 1. 判斷誰是贏家
+    let winnerRole = "tie";
+    if (scores.p1 > scores.p2) winnerRole = "p1";
+    if (scores.p2 > scores.p1) winnerRole = "p2";
+
+    // 2. 根據「當前看螢幕的人 (myRole)」給專屬訊息
+    if (winnerRole === "tie") {
       resultTitle = "🤝 雙方勢均力敵，平手！ 🤝";
       subMessage = "兩位同學都非常優秀！";
+    } else if (winnerRole === myRole) {
+      // 自己贏了
+      resultTitle = `🎉 恭喜你獲勝！ 🎉`;
+      subMessage = "太厲害了，繼續保持！";
+      titleColor = myRole === 'p1' ? "#60a5fa" : "#f87171"; 
+    } else if (myRole === 'p1' || myRole === 'p2') {
+      // 自己輸了
+      resultTitle = `😢 挑戰失敗... 😢`;
+      subMessage = `不要灰心，再接再厲下次一定贏！ 💪`;
+      titleColor = "#9ca3af"; // 低調灰色
+    } else {
+      // 老師/旁觀者視角
+      const winnerName = winnerRole === 'p1' ? names.p1 : names.p2;
+      resultTitle = `🎉 恭喜 ${winnerName} 獲勝！ 🎉`;
+      subMessage = "一場精彩的對決！";
+      titleColor = winnerRole === 'p1' ? "#60a5fa" : "#f87171";
     }
 
     return (
