@@ -41,54 +41,71 @@ const renderContent = (text) => {
 };
 
 // ==========================================
-// 🌟 留言板元件 🌟
+// 🌟 留言板元件 (具備自動重連機制) 🌟
 // ==========================================
 function ChatBoard({ currentUser }) {
   const [msgs, setMsgs] = useState([]);
   const [msgCount, setMsgCount] = useState(0);
   const [input, setInput] = useState("");
+  const [serverStatus, setServerStatus] = useState("loading"); // loading, online, offline
   const API_BASE = "https://quiz-api-backend-hn0s.onrender.com/api";
 
   const refreshData = async () => {
     try {
-      const resMsg = await fetch(`${API_BASE}/messages`);
-      if (resMsg.ok) setMsgs(await resMsg.json());
+      // 嘗試獲取留言數量作為心跳檢測，設定 5 秒超時
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
       
-      const resCount = await fetch(`${API_BASE}/message_count`);
+      const resCount = await fetch(`${API_BASE}/message_count`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
       if (resCount.ok) {
-        const data = await resCount.json();
-        setMsgCount(data.count);
+        const countData = await resCount.json();
+        setMsgCount(countData.count);
+        
+        const resMsg = await fetch(`${API_BASE}/messages`);
+        if (resMsg.ok) {
+          setMsgs(await resMsg.json());
+          setServerStatus("online");
+        }
+      } else {
+        setServerStatus("offline");
       }
     } catch (e) { 
-        // 背景默默失敗
+        setServerStatus("offline");
     }
   };
 
   useEffect(() => {
     refreshData();
-    const interval = setInterval(refreshData, 5000); 
+    const interval = setInterval(refreshData, 10000); // 每 10 秒自動檢查一次
     return () => clearInterval(interval);
   }, []);
 
   const handlePost = async () => {
-    if (!input.trim()) return;
+    if (!input.trim() || serverStatus === "offline") return;
     try {
-      await fetch(`${API_BASE}/messages`, {
+      const res = await fetch(`${API_BASE}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname: currentUser, content: input })
       });
-      setInput("");
-      refreshData();
+      if (res.ok) {
+        setInput("");
+        refreshData();
+      }
     } catch (e) { 
-        alert("留言發送失敗，請確認伺服器狀態！"); 
+        alert("留言發送失敗，伺服器可能正在啟動中，請稍候。"); 
     }
   };
 
   return (
     <div style={{ marginTop: '30px', backgroundColor: '#1a1a1a', padding: '20px', borderRadius: '15px', border: '1px solid #333' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-        <h3 style={{ color: '#fbbf24', margin: 0, textAlign: 'left' }}>💬 學生討論區</h3>
+        <h3 style={{ color: '#fbbf24', margin: 0, textAlign: 'left' }}>
+          💬 學生討論區 
+          {serverStatus === "offline" && <span style={{ fontSize: '0.8rem', color: '#ef4444', marginLeft: '10px' }}>(伺服器啟動中...)</span>}
+        </h3>
         <span style={{ backgroundColor: '#333', padding: '4px 10px', borderRadius: '10px', fontSize: '0.8rem', color: '#9ca3af' }}>
           目前共有 {msgCount} 則留言
         </span>
@@ -99,14 +116,21 @@ function ChatBoard({ currentUser }) {
           value={input} 
           onChange={(e) => setInput(e.target.value)}
           onKeyPress={(e) => e.key === 'Enter' && handlePost()}
-          placeholder="輸入留言內容..."
-          style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: '#222', color: '#fff', fontSize: '1rem' }}
+          placeholder={serverStatus === "offline" ? "等待伺服器喚醒..." : "輸入留言內容..."}
+          disabled={serverStatus === "offline"}
+          style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: '#222', color: '#fff', fontSize: '1rem', opacity: serverStatus === "offline" ? 0.5 : 1 }}
         />
-        <button onClick={handlePost} style={{ padding: '0 20px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight:'bold' }}>送出</button>
+        <button 
+          onClick={handlePost} 
+          disabled={serverStatus === "offline"}
+          style={{ padding: '0 20px', backgroundColor: serverStatus === "offline" ? '#444' : '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight:'bold' }}
+        >送出</button>
       </div>
 
       <div style={{ maxHeight: '250px', overflowY: 'auto', textAlign: 'left', paddingRight: '5px' }}>
-        {msgs.length === 0 ? <p style={{color: '#555'}}>目前尚無留言...</p> : msgs.map(m => (
+        {serverStatus === "loading" ? <p style={{color: '#555'}}>正在連線...</p> : 
+         (serverStatus === "offline" && msgs.length === 0) ? <p style={{color: '#888'}}>討論區伺服器正在從休眠中醒來，請稍候約 30 秒...</p> :
+         msgs.length === 0 ? <p style={{color: '#555'}}>目前尚無留言...</p> : msgs.map(m => (
           <div key={m.id} style={{ padding: '10px 0', borderBottom: '1px solid #333' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
               <span style={{ color: '#60a5fa', fontWeight: 'bold', fontSize: '0.9rem' }}>{m.nickname}</span>
@@ -127,7 +151,6 @@ function App() {
   const MAX_QUESTIONS = 10; 
   const bgmRef = useRef(null);
 
-  // --- 狀態管理 ---
   const [user, setUser] = useState(null); 
   const [loginId, setLoginId] = useState(""); 
   const [password, setPassword] = useState(""); 
@@ -151,17 +174,15 @@ function App() {
   const [shuffledOptions, setShuffledOptions] = useState([]);
   const [p2Joined, setP2Joined] = useState(false);
 
-  // 🛡️ 新增：防止遊戲中途跳出的監聽邏輯
+  // 🛡️ 防止遊戲中途跳出
   useEffect(() => {
     const handleBeforeUnload = (e) => {
-      // 只有在房間內、不是老師(viewer)、且遊戲還沒結束時才警告
       if (roomId && myRole !== 'viewer' && !gameOver) {
         e.preventDefault();
-        e.returnValue = '遊戲正在進行中，離開將判定為斷線失敗！';
+        e.returnValue = '遊戲尚未結束，離開將判定為斷線！';
         return e.returnValue;
       }
     };
-
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [roomId, myRole, gameOver]);
@@ -243,15 +264,13 @@ function App() {
                 const p2Win = scores.p2 > scores.p1 ? 1 : 0;
                 const p1EnergyChange = scores.p1 > scores.p2 ? 2 : (scores.p1 < scores.p2 ? -1 : 0);
                 const p2EnergyChange = scores.p2 > scores.p1 ? 2 : (scores.p2 < scores.p1 ? -1 : 0);
-                const p1Ref = ref(db, `users/${playerIds.p1}`);
-                runTransaction(p1Ref, (d) => { 
+                runTransaction(ref(db, `users/${playerIds.p1}`), (d) => { 
                     if(!d) d={name:names.p1, totalWins:0, totalScore:0, energy:10}; 
                     d.totalWins=(d.totalWins||0)+p1Win; d.totalScore=(d.totalScore||0)+scores.p1; 
                     d.energy = Math.max(0, (d.energy !== undefined ? d.energy : 10) + p1EnergyChange);
                     return d; 
                 });
-                const p2Ref = ref(db, `users/${playerIds.p2}`);
-                runTransaction(p2Ref, (d) => { 
+                runTransaction(ref(db, `users/${playerIds.p2}`), (d) => { 
                     if(!d) d={name:names.p2, totalWins:0, totalScore:0, energy:10}; 
                     d.totalWins=(d.totalWins||0)+p2Win; d.totalScore=(d.totalScore||0)+scores.p2; 
                     d.energy = Math.max(0, (d.energy !== undefined ? d.energy : 10) + p2EnergyChange);
@@ -351,30 +370,20 @@ function App() {
 
   const handleJoinRoom = (selectedRoomId) => {
     if (user.id === "teacher") {
-        setMyRole('viewer');
-        setRoomId(selectedRoomId);
-        startBGM();
-        return;
+        setMyRole('viewer'); setRoomId(selectedRoomId); startBGM(); return;
     }
-
     const currentEnergy = userData?.energy !== undefined ? userData.energy : 10;
-    if (currentEnergy <= 0) {
-        alert("能量耗盡囉！💔");
-        return;
-    }
-
+    if (currentEnergy <= 0) { alert("能量耗盡囉！💔"); return; }
     const roomRef = ref(db, `rooms/${selectedRoomId}`);
     get(roomRef).then((snapshot) => {
       const data = snapshot.val() || {};
       if (!data.p1Present) {
-        setMyRole('p1'); setRoomId(selectedRoomId);
-        startBGM();
+        setMyRole('p1'); setRoomId(selectedRoomId); startBGM();
         set(roomRef, { p1Present: true, names: { p1: user.name, p2: "等待中..." }, playerIds: { p1: user.id, p2: null }, currentIdx: 0, scores: { p1: 0, p2: 0 }, streaks: { p1: 0, p2: 0 }, selections: { p1: null, p2: null }, timeLeft: 30, showResult: false, gameOver: false, statsSaved: false });
         onDisconnect(ref(db, `rooms/${selectedRoomId}/p1Present`)).remove(); onDisconnect(ref(db, `rooms/${selectedRoomId}/names/p1`)).set("斷線");
       } 
       else if (!data.p2Present) {
-        setMyRole('p2'); setRoomId(selectedRoomId);
-        startBGM();
+        setMyRole('p2'); setRoomId(selectedRoomId); startBGM();
         update(roomRef, { p2Present: true, "names/p2": user.name, "playerIds/p2": user.id, timeLeft: 30 });
         onDisconnect(ref(db, `rooms/${selectedRoomId}/p2Present`)).remove(); onDisconnect(ref(db, `rooms/${selectedRoomId}/names/p2`)).set("斷線");
       } 
@@ -458,7 +467,6 @@ function App() {
             .room-btn.empty { background-color: #22c55e; }
             .room-btn.waiting { background-color: #eab308; }
             .room-btn.full { background-color: #ef4444; }
-            .room-btn:disabled { cursor: not-allowed; opacity: 0.8; }
         `}</style>
       </div>
     );
@@ -481,10 +489,7 @@ function App() {
             bgColor = mySelIdx === idx ? '#3b82f6' : '#222';
         }
     }
-    return {
-        backgroundColor: bgColor,
-        border: (selections?.p1?.idx === idx || selections?.p2?.idx === idx) ? '3px solid #fff' : '1px solid #444',
-    };
+    return { backgroundColor: bgColor, border: (selections?.p1?.idx === idx || selections?.p2?.idx === idx) ? '3px solid #fff' : '1px solid #444' };
   };
 
   if (gameOver) {
@@ -512,9 +517,7 @@ function App() {
       </div>
       
       <div className="main-area">
-        {!p2Joined ? (
-            <div className="waiting-screen">⏳ 等待對手加入...</div>
-        ) : (
+        {!p2Joined ? <div className="waiting-screen">⏳ 等待對手加入...</div> : (
             <>
                 <div className="question-box">
                     <div style={{ color: '#9ca3af', fontSize:'0.9rem' }}>Room {roomId} | Q{currentIdx + 1}/{MAX_QUESTIONS}</div>
@@ -548,16 +551,12 @@ function App() {
         .timer { font-size: 2rem; font-weight: bold; }
         .player-info { font-size: 0.8rem; transition: opacity 0.3s; }
         .player-info.done { opacity: 1; font-weight: bold; }
-        
         .main-area { flex: 1; display: flex; flex-direction: column; padding: 15px; overflow-y: auto; }
         .question-box { background: #111; padding: 15px; border-radius: 15px; text-align: center; margin-bottom: 15px; border: 1px solid #333; }
         .question-text { font-size: 1.4rem; font-weight: bold; margin-top: 5px; }
-        
         .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: 1; }
         @media (max-width: 768px) { .options-grid { grid-template-columns: 1fr; } }
-        
         .option-btn { padding: 15px; font-size: 1.2rem; font-weight: bold; border-radius: 12px; color: white; cursor: pointer; transition: 0.2s; min-height: 70px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
-        
         .footer-scores { height: 15%; display: flex; border-top: 2px solid #333; }
         .score-p1, .score-p2 { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 3rem; font-weight: 900; position: relative; }
         .score-p1 { background: #0a192f; color: #60a5fa; }
