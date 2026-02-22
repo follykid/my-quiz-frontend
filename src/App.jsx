@@ -367,7 +367,34 @@ function App() {
       });
     } else { alert("登入失敗！"); }
   };
+// --- 真正的返回大廳邏輯 ---
+  const handleReturnToLobby = () => {
+    // 離開時清理 Firebase 上的房間，讓下一組人可以進去玩
+    if (roomId) {
+        if (myRole === 'p1') {
+            set(ref(db, `rooms/${roomId}`), { p1Present: false, p2Present: false });
+        } else if (myRole === 'p2') {
+            update(ref(db, `rooms/${roomId}`), { p2Present: false });
+        }
+    }
 
+    // 關閉背景音樂
+    if (bgmRef.current) {
+        bgmRef.current.pause();
+        bgmRef.current.currentTime = 0;
+    }
+
+    // 將所有本地狀態重置，退回大廳 (但不清掉 user，所以不會被登出)
+    setRoomId(null);
+    setMyRole(null);
+    setGameOver(false);
+    setCurrentIdx(0);
+    setShowResult(false);
+    setP2Joined(false);
+    setScores({ p1: 0, p2: 0 });
+    setStreaks({ p1: 0, p2: 0 });
+    setSelections({ p1: null, p2: null });
+  };
   const handleJoinRoom = (selectedRoomId) => {
     if (user.id === "teacher") {
         setMyRole('viewer'); setRoomId(selectedRoomId); startBGM(); return;
@@ -492,18 +519,40 @@ function App() {
     return { backgroundColor: bgColor, border: (selections?.p1?.idx === idx || selections?.p2?.idx === idx) ? '3px solid #fff' : '1px solid #444' };
   };
 
-  if (gameOver) {
+ if (gameOver) {
+    let resultTitle = "";
+    let subMessage = "";
+    let titleColor = "#fbbf24"; // 平手預設黃色
+
+    if (scores.p1 > scores.p2) {
+      resultTitle = `🎉 恭喜 ${names.p1} 獲勝！ 🎉`;
+      subMessage = `不要灰心 ${names.p2}，再接再厲下次一定贏！ 💪`;
+      titleColor = "#60a5fa"; // P1 贏用藍色
+    } else if (scores.p2 > scores.p1) {
+      resultTitle = `🎉 恭喜 ${names.p2} 獲勝！ 🎉`;
+      subMessage = `不要灰心 ${names.p1}，再接再厲下次一定贏！ 💪`;
+      titleColor = "#f87171"; // P2 贏用紅色
+    } else {
+      resultTitle = "🤝 雙方勢均力敵，平手！ 🤝";
+      subMessage = "兩位同學都非常優秀！";
+    }
+
     return (
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000', color: '#fff', textAlign: 'center' }}>
-        <h1 style={{fontSize: '3rem', color: scores.p1 > scores.p2 ? '#60a5fa' : (scores.p1 < scores.p2 ? '#f87171' : '#fbbf24')}}>
-            {scores.p1 === scores.p2 ? '平手！' : '遊戲結束'}
+        <h1 style={{fontSize: '3rem', color: titleColor, marginBottom: '10px'}}>
+            {resultTitle}
         </h1>
-        <div style={{display:'flex', gap:'30px', margin:'30px 0', fontSize:'2rem'}}>
-            <div>{names.p1}<br/>{scores.p1}</div>
-            <div style={{alignSelf:'center'}}>VS</div>
-            <div>{names.p2}<br/>{scores.p2}</div>
+        <p style={{fontSize: '1.5rem', color: '#9ca3af', marginBottom: '30px'}}>
+            {subMessage}
+        </p>
+        <div style={{display:'flex', gap:'50px', margin:'20px 0', fontSize:'2.5rem', fontWeight: 'bold'}}>
+            <div style={{color: '#60a5fa'}}>{names.p1}<br/><span style={{fontSize:'4rem'}}>{scores.p1}</span></div>
+            <div style={{alignSelf:'center', fontSize:'1.5rem', color:'#555'}}>VS</div>
+            <div style={{color: '#f87171'}}>{names.p2}<br/><span style={{fontSize:'4rem'}}>{scores.p2}</span></div>
         </div>
-        <button onClick={() => window.location.reload()} style={{padding:'15px 40px', fontSize:'1.2rem', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius:'10px', cursor:'pointer'}}>返回大廳</button>
+        <button onClick={handleReturnToLobby} style={{marginTop: '40px', padding:'15px 40px', fontSize:'1.2rem', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius:'10px', cursor:'pointer', fontWeight:'bold', transition: '0.2s'}}>
+          返回大廳
+        </button>
       </div>
     );
   }
