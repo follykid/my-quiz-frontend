@@ -1,0 +1,9 @@
+/* 讓網頁完全填滿，不留任何預設邊距 */
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: #121212; /* 預設底色 */
+}
