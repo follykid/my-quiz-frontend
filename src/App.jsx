@@ -41,35 +41,32 @@ const renderContent = (text) => {
 };
 
 // ==========================================
-// 🌟 留言板元件 (連接你的 Flask 後端) 🌟
+// 🌟 留言板元件 🌟
 // ==========================================
 function ChatBoard({ currentUser }) {
   const [msgs, setMsgs] = useState([]);
   const [msgCount, setMsgCount] = useState(0);
   const [input, setInput] = useState("");
-  // ⚠️ 如果你之後把 Flask 放上雲端 (例如 Render)，請把這裡換成雲端網址
   const API_BASE = "https://quiz-api-backend-hn0s.onrender.com/api";
 
   const refreshData = async () => {
     try {
-      // 1. 抓取留言清單
       const resMsg = await fetch(`${API_BASE}/messages`);
       if (resMsg.ok) setMsgs(await resMsg.json());
       
-      // 2. 抓取留言總數
       const resCount = await fetch(`${API_BASE}/message_count`);
       if (resCount.ok) {
         const data = await resCount.json();
         setMsgCount(data.count);
       }
     } catch (e) { 
-        // 為了避免洗頻，如果 Flask 沒開就不特別跳警告，只在背景默默失敗
+        // 背景默默失敗
     }
   };
 
   useEffect(() => {
     refreshData();
-    const interval = setInterval(refreshData, 5000); // 每 5 秒自動刷一次
+    const interval = setInterval(refreshData, 5000); 
     return () => clearInterval(interval);
   }, []);
 
@@ -160,7 +157,13 @@ function App() {
     bgmRef.current.volume = 0.4;
   }, []);
 
-  const startBGM = () => { if (bgmRef.current) bgmRef.current.play().catch(e => console.log("等待互動")); };
+  // 💡 修改：加上 currentTime = 0，確保每次戰鬥都從頭開始播
+  const startBGM = () => { 
+      if (bgmRef.current) {
+          bgmRef.current.currentTime = 0; 
+          bgmRef.current.play().catch(e => console.log("等待互動")); 
+      }
+  };
 
   useEffect(() => {
     Papa.parse("/data.csv", {
@@ -327,7 +330,8 @@ function App() {
           } else {
               set(userRef, { name: student.name, totalWins: 0, totalScore: 0, energy: 10, lastLoginDate: today });
           }
-          setUser(student); startBGM(); 
+          setUser(student); 
+          // 💡 已經把這裡的 startBGM() 移除了！大廳不會播音樂了。
       });
     } else { alert("登入失敗！"); }
   };
@@ -336,6 +340,7 @@ function App() {
     if (user.id === "teacher") {
         setMyRole('viewer');
         setRoomId(selectedRoomId);
+        startBGM(); // 💡 加入音樂：老師進房巡堂時開始播放
         return;
     }
 
@@ -350,11 +355,13 @@ function App() {
       const data = snapshot.val() || {};
       if (!data.p1Present) {
         setMyRole('p1'); setRoomId(selectedRoomId);
+        startBGM(); // 💡 加入音樂：P1 進房時開始播放
         set(roomRef, { p1Present: true, names: { p1: user.name, p2: "等待中..." }, playerIds: { p1: user.id, p2: null }, currentIdx: 0, scores: { p1: 0, p2: 0 }, streaks: { p1: 0, p2: 0 }, selections: { p1: null, p2: null }, timeLeft: 30, showResult: false, gameOver: false, statsSaved: false });
         onDisconnect(ref(db, `rooms/${selectedRoomId}/p1Present`)).remove(); onDisconnect(ref(db, `rooms/${selectedRoomId}/names/p1`)).set("斷線");
       } 
       else if (!data.p2Present) {
         setMyRole('p2'); setRoomId(selectedRoomId);
+        startBGM(); // 💡 加入音樂：P2 進房時開始播放
         update(roomRef, { p2Present: true, "names/p2": user.name, "playerIds/p2": user.id, timeLeft: 30 });
         onDisconnect(ref(db, `rooms/${selectedRoomId}/p2Present`)).remove(); onDisconnect(ref(db, `rooms/${selectedRoomId}/names/p2`)).set("斷線");
       } 
