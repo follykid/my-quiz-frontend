@@ -369,10 +369,10 @@ function App() {
   };
 // --- 真正的返回大廳邏輯 ---
   const handleReturnToLobby = () => {
-    // 離開時清理 Firebase 上的房間，讓下一組人可以進去玩
+    // 離開時清理 Firebase 上的狀態，改用 update 避免覆蓋整個房間資料
     if (roomId) {
         if (myRole === 'p1') {
-            set(ref(db, `rooms/${roomId}`), { p1Present: false, p2Present: false });
+            update(ref(db, `rooms/${roomId}`), { p1Present: false });
         } else if (myRole === 'p2') {
             update(ref(db, `rooms/${roomId}`), { p2Present: false });
         }
@@ -384,7 +384,7 @@ function App() {
         bgmRef.current.currentTime = 0;
     }
 
-    // 將所有本地狀態重置，退回大廳 (但不清掉 user，所以不會被登出)
+    // 重置本地狀態
     setRoomId(null);
     setMyRole(null);
     setGameOver(false);
@@ -585,32 +585,51 @@ if (gameOver) {
     <div className="game-container">
       <div className="header">
         <div className={`player-info p1 ${selections?.p1 ? 'done' : ''}`}>🔵 {names.p1}<br/>{selections?.p1 ? '已作答' : '思考中'}</div>
-        <div className="timer">{!p2Joined ? '等待中' : `${timeLeft}s`}</div>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div className="timer">{!p2Joined ? '等待中' : `${timeLeft}s`}</div>
+            {/* 🌟 新增：遊戲進行中的緊急退出按鈕 */}
+            <button onClick={handleReturnToLobby} style={{ marginTop: '5px', padding: '2px 8px', fontSize: '0.8rem', background: '#444', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+                離開
+            </button>
+        </div>
+
         <div className={`player-info p2 ${selections?.p2 ? 'done' : ''}`}>🔴 {names.p2}<br/>{selections?.p2 ? '已作答' : '思考中'}</div>
       </div>
       
       <div className="main-area">
-        {!p2Joined ? <div className="waiting-screen">⏳ 等待對手加入...</div> : (
-            <>
-                <div className="question-box">
-                    <div style={{ color: '#9ca3af', fontSize:'0.9rem' }}>Room {roomId} | Q{currentIdx + 1}/{MAX_QUESTIONS}</div>
-                    <div className="question-text">{renderContent(currentQ?.question)}</div>
-                </div>
-                <div className="options-grid">
-                    {shuffledOptions.map((opt, idx) => (
-                        <button key={idx} onClick={() => onSelect(idx)} style={getBtnStyle(idx)} className="option-btn">
-                            {renderContent(opt.text)}
-                            {myRole === 'viewer' && (
-                                <div style={{fontSize:'0.75rem', marginTop:'5px', display:'flex', justifyContent:'center', gap:'5px'}}>
-                                    {selections?.p1?.idx === idx && <span>🔵 P1選</span>}
-                                    {selections?.p2?.idx === idx && <span>🔴 P2選</span>}
-                                </div>
-                            )}
-                        </button>
-                    ))}
-                </div>
-            </>
-        )}
+  {!p2Joined ? (
+        // 👇 這裡是你原本的等待畫面，我幫它加上了排版和退出按鈕
+        <div className="waiting-screen" style={{ flexDirection: 'column', gap: '20px' }}>
+            <div>⏳ 等待對手加入...</div>
+            <button 
+                onClick={handleReturnToLobby} 
+                style={{ padding: '10px 20px', fontSize: '1.2rem', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+                🚪 退出房間
+            </button>
+        </div>
+      ) : (
+        // 👇 這裡完全保留你原本的程式碼，一字不漏！
+        <>
+            <div className="question-box">
+                <div style={{ color: '#9ca3af', fontSize:'0.9rem' }}>Room {roomId} | Q{currentIdx + 1}/{MAX_QUESTIONS}</div>
+                <div className="question-text">{renderContent(currentQ?.question)}</div>
+            </div>
+            <div className="options-grid">
+                {shuffledOptions.map((opt, idx) => (
+                    <button key={idx} onClick={() => onSelect(idx)} style={getBtnStyle(idx)} className="option-btn">
+                        {renderContent(opt.text)}
+                        {myRole === 'viewer' && (
+                            <div style={{fontSize:'0.75rem', marginTop:'5px', display:'flex', justifyContent:'center', gap:'5px'}}>
+                                {selections?.p1?.idx === idx && <span>🔵 P1選</span>}
+                                {selections?.p2?.idx === idx && <span>🔴 P2選</span>}
+                            </div>
+                        )}
+                    </button>
+                ))}
+            </div>
+        </>
+      )}
       </div>
 
       <div className="footer-scores">
