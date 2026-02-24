@@ -199,7 +199,7 @@ function App() {
     }
   }, [roomId, myRole, gameOver]);
 
-  // 防呆：自動踢除機制
+  // 防呆：自動踢除機制（當對手斷線或不告而別）
   useEffect(() => {
     if (!roomId || myRole === 'viewer' || gameOver || !p2Joined) return;
     const oppRole = myRole === 'p1' ? 'p2Present' : 'p1Present';
@@ -328,7 +328,6 @@ function App() {
         if (snapshot.exists()) {
             const data = snapshot.val();
             const list = Object.keys(data).map(key => data[key]);
-            // 依照答錯率由高到低排序，如果答錯率一樣，就依據總次數排
             list.sort((a, b) => {
                 const rateA = a.totalCount > 0 ? (a.wrongCount / a.totalCount) : 0;
                 const rateB = b.totalCount > 0 ? (b.wrongCount / b.totalCount) : 0;
@@ -346,7 +345,6 @@ function App() {
     const roomRef = ref(db, `rooms/${roomId}`);
     let newScores = { ...scores }; let newStreaks = { ...streaks };
     
-    // 紀錄作答正確率
     if (myRole === 'p1') {
         const currentQ = questions[currentIdx];
         if (currentQ) {
@@ -416,7 +414,7 @@ function App() {
           }
           setUser(student); 
       });
-    } else { alert("登入失敗！"); }
+    } else { alert("登入失敗！請確認學號密碼"); }
   };
 
   const handleReturnToLobby = () => {
@@ -445,6 +443,7 @@ function App() {
       
       if (!data.p1Present) {
         setMyRole('p1'); setRoomId(selectedRoomId); startBGM();
+        // 如果連 P2 也都不在，這是一間幽靈空房，直接大掃除重置！
         if (!data.p2Present) {
             set(roomRef, { p1Present: true, p2Present: false, names: { p1: user.name, p2: "等待中..." }, playerIds: { p1: user.id, p2: null }, currentIdx: 0, scores: { p1: 0, p2: 0 }, streaks: { p1: 0, p2: 0 }, selections: { p1: null, p2: null }, timeLeft: 30, showResult: false, gameOver: false, statsSaved: false });
         } else {
@@ -475,7 +474,6 @@ function App() {
     );
   }
 
-  // 🌟 老師專用統計畫面
   if (showStats) {
     return (
         <div style={{ height: '100dvh', padding: '20px', backgroundColor: '#111', color: '#fff', overflowY: 'auto' }}>
@@ -514,7 +512,6 @@ function App() {
     );
   }
 
-  // 排行榜畫面
   if (showLeaderboard) {
     return (
         <div style={{ height: '100dvh', padding: '20px', backgroundColor: '#111', color: '#fff', overflowY: 'auto' }}>
@@ -553,7 +550,6 @@ function App() {
                 {user.id !== 'teacher' && <span style={{fontSize:'1rem', color:'#ec4899', marginLeft:'15px'}}>❤️ {currentEnergy}</span>}
             </h2>
             <div>
-                {/* 🌟 只有老師才能看到這顆按鈕 */}
                 {user.id === 'teacher' && (
                     <button onClick={fetchStats} style={{padding:'10px 20px', marginRight:'10px', background:'#8b5cf6', color:'white', borderRadius:'5px', fontWeight:'bold', border:'none', cursor:'pointer'}}>📊 答錯率分析</button>
                 )}
@@ -566,7 +562,9 @@ function App() {
             const rId = String(num); const rData = roomsStatus[rId] || {};
             const isFull = rData.p1Present && rData.p2Present;
             const isEmpty = !rData.p1Present && !rData.p2Present;
-            const inProgress = rData.currentIdx > 0; 
+            
+            // 💡 關鍵修復：只有房間內有人的時候，才算 inProgress！幽靈房會變回空房。
+            const inProgress = (rData.currentIdx > 0 || rData.gameOver) && !isEmpty; 
             const canJoin = user.id === 'teacher' || (!isFull && !inProgress);
             
             return (
@@ -651,71 +649,52 @@ function App() {
     );
   }
 
+  // 🌟 幫你把斷掉的對戰畫面補齊了！
   return (
-    <div className="game-container">
-      <div className="header">
-        <div className={`player-info p1 ${selections?.p1 ? 'done' : ''}`}>🔵 {names.p1}<br/>{selections?.p1 ? '已作答' : '思考中'}</div>
+    <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', backgroundColor: '#111', color: '#fff' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '15px', backgroundColor: '#222', alignItems: 'center' }}>
+        <div style={{ color: '#60a5fa', fontWeight: 'bold' }}>🔵 {names.p1}<br/><span style={{fontSize:'0.8rem', color:'#888'}}>{selections?.p1 ? '已作答' : '思考中'}</span></div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <div className="timer">{!p2Joined ? '等待中' : `${timeLeft}s`}</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#fbbf24' }}>{!p2Joined ? '等待中' : `${timeLeft}s`}</div>
             <button onClick={handleReturnToLobby} style={{ marginTop: '5px', padding: '2px 8px', fontSize: '0.8rem', background: '#444', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>離開</button>
         </div>
-        <div className={`player-info p2 ${selections?.p2 ? 'done' : ''}`}>🔴 {names.p2}<br/>{selections?.p2 ? '已作答' : '思考中'}</div>
+        <div style={{ color: '#f87171', fontWeight: 'bold', textAlign: 'right' }}>🔴 {names.p2}<br/><span style={{fontSize:'0.8rem', color:'#888'}}>{selections?.p2 ? '已作答' : '思考中'}</span></div>
       </div>
       
-      <div className="main-area">
-  {!p2Joined ? (
-        <div className="waiting-screen" style={{ flexDirection: 'column', gap: '20px' }}>
-            <div>⏳ 等待對手加入...</div>
-            <button onClick={handleReturnToLobby} style={{ padding: '10px 20px', fontSize: '1.2rem', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>🚪 退出房間</button>
-        </div>
-      ) : (
-        <>
-            <div className="question-box">
-                {/* 🌟 這裡新增了領域顯示！ */}
-                <div style={{ color: '#9ca3af', fontSize:'0.9rem' }}>Room {roomId} | {currentQ?.category} | Q{currentIdx + 1}/{MAX_QUESTIONS}</div>
-                <div className="question-text">{renderContent(currentQ?.question)}</div>
+      <div style={{ flex: 1, padding: '20px', display: 'flex', flexDirection: 'column' }}>
+        {!p2Joined ? (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                <h2 style={{color: '#f59e0b', fontSize: '2rem'}}>等待對手加入中...</h2>
+                <div style={{marginTop: '20px', border: '4px solid rgba(255,255,255,0.1)', borderTop: '4px solid #f59e0b', borderRadius: '50%', width: '40px', height: '40px', animation: 'spin 1s linear infinite'}}></div>
+                <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
             </div>
-            <div className="options-grid">
-                {shuffledOptions.map((opt, idx) => (
-                    <button key={idx} onClick={() => onSelect(opt)} style={getBtnStyle(opt)} className="option-btn">
-                        {renderContent(opt.text)}
-                        {myRole === 'viewer' && (
-                            <div style={{fontSize:'0.75rem', marginTop:'5px', display:'flex', justifyContent:'center', gap:'5px'}}>
-                                {selections?.p1?.text === opt.text && <span>🔵 P1選</span>}
-                                {selections?.p2?.text === opt.text && <span>🔴 P2選</span>}
-                            </div>
-                        )}
-                    </button>
-                ))}
+        ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                    <span style={{ backgroundColor: '#4b5563', padding: '5px 15px', borderRadius: '15px', fontSize: '0.9rem' }}>第 {currentIdx + 1} / {MAX_QUESTIONS} 題 - {currentQ?.category}</span>
+                </div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 'bold', textAlign: 'center', marginBottom: '20px', minHeight: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {renderContent(currentQ?.question)}
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', flex: 1 }}>
+                    {shuffledOptions.map((opt, idx) => (
+                        <button key={idx} 
+                            onClick={() => onSelect(opt)}
+                            disabled={showResult || myRole === 'viewer' || selections?.[myRole]}
+                            style={{ ...getBtnStyle(opt), borderRadius: '10px', fontSize: '1.2rem', color: '#fff', padding: '10px', transition: '0.2s', cursor: (showResult || myRole === 'viewer' || selections?.[myRole]) ? 'default' : 'pointer' }}>
+                            {renderContent(opt.text)}
+                        </button>
+                    ))}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '20px', fontSize: '1.5rem', fontWeight: 'bold' }}>
+                    <div style={{ color: '#60a5fa' }}>{scores.p1}</div>
+                    <div style={{ color: '#f87171' }}>{scores.p2}</div>
+                </div>
             </div>
-        </>
-      )}
+        )}
       </div>
-
-      <div className="footer-scores">
-        <div className="score-p1">{scores.p1}{streaks.p1 >= 3 && <span className="combo">🔥{streaks.p1}</span>}</div>
-        <div className="score-p2">{scores.p2}{streaks.p2 >= 3 && <span className="combo">🔥{streaks.p2}</span>}</div>
-      </div>
-
-      <style>{`
-        .game-container { height: 100dvh; width: 100vw; background: #000; color: white; display: flex; flex-direction: column; overflow: hidden; }
-        .header { height: 12%; display: flex; justify-content: space-between; align-items: center; padding: 0 20px; border-bottom: 2px solid #333; }
-        .timer { font-size: 2rem; font-weight: bold; }
-        .player-info { font-size: 0.8rem; transition: opacity 0.3s; }
-        .player-info.done { opacity: 1; font-weight: bold; }
-        .main-area { flex: 1; display: flex; flex-direction: column; padding: 15px; overflow-y: auto; min-height: 0; }
-        .question-box { background: #111; padding: 15px; border-radius: 15px; text-align: center; margin-bottom: 15px; border: 1px solid #333; }
-        .question-text { font-size: 1.4rem; font-weight: bold; margin-top: 5px; }
-        .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: 1; }
-        @media (max-width: 768px) { .options-grid { grid-template-columns: 1fr; } }
-        .option-btn { padding: 15px; font-size: 1.2rem; font-weight: bold; border-radius: 12px; color: white; cursor: pointer; transition: 0.2s; min-height: 70px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
-        .footer-scores { height: 15%; display: flex; border-top: 2px solid #333; }
-        .score-p1, .score-p2 { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 3rem; font-weight: 900; position: relative; }
-        .score-p1 { background: #0a192f; color: #60a5fa; }
-        .score-p2 { background: #2d0a0a; color: #f87171; }
-        .combo { position: absolute; top: 5px; font-size: 1rem; color: #fbbf24; }
-        .waiting-screen { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; color: #fbbf24; }
-      `}</style>
     </div>
   );
 }
