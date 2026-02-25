@@ -175,6 +175,10 @@ function App() {
   const [gameOver, setGameOver] = useState(false);
   const [shuffledOptions, setShuffledOptions] = useState([]);
   const [p2Joined, setP2Joined] = useState(false);
+  const [questionOrder, setQuestionOrder] = useState([]); 
+  
+  // 🌟 新增：記錄是誰中途逃跑（'p1' 或 'p2'）
+  const [forfeitedBy, setForfeitedBy] = useState(null);
 
   // 防呆：處理手機關閉網頁或重整
   useEffect(() => {
@@ -185,31 +189,34 @@ function App() {
         return e.returnValue;
       }
     };
-    const handlePageHide = () => {
-      if (roomId && myRole && myRole !== 'viewer') {
-        const roleKey = myRole === 'p1' ? 'p1Present' : 'p2Present';
-        update(ref(db, `rooms/${roomId}`), { [roleKey]: false });
-      }
-    };
     window.addEventListener('beforeunload', handleBeforeUnload);
-    window.addEventListener('pagehide', handlePageHide);
     return () => {
         window.removeEventListener('beforeunload', handleBeforeUnload);
-        window.removeEventListener('pagehide', handlePageHide);
     }
   }, [roomId, myRole, gameOver]);
 
-  // 防呆：自動踢除機制（當對手斷線或不告而別）
+  // 🌟 修改：防呆與自動踢除機制 (改為觸發對手投降)
   useEffect(() => {
     if (!roomId || myRole === 'viewer' || gameOver || !p2Joined) return;
     const oppRole = myRole === 'p1' ? 'p2Present' : 'p1Present';
+    let disconnectTimer = null;
+
     const unsub = onValue(ref(db, `rooms/${roomId}/${oppRole}`), (snap) => {
         if (snap.val() === false) {
-            alert("對手已離開房間或斷線，遊戲結束！");
-            handleReturnToLobby();
+            disconnectTimer = setTimeout(() => {
+                // 對手離線超過 4 秒，判定對手逃跑！
+                const leaverRole = myRole === 'p1' ? 'p2' : 'p1';
+                update(ref(db, `rooms/${roomId}`), { gameOver: true, forfeitedBy: leaverRole });
+            }, 4000);
+        } else {
+            if (disconnectTimer) clearTimeout(disconnectTimer);
         }
     });
-    return () => unsub();
+
+    return () => {
+        unsub();
+        if (disconnectTimer) clearTimeout(disconnectTimer);
+    };
   // eslint-disable-next-line
   }, [roomId, myRole, p2Joined, gameOver]);
 
@@ -243,12 +250,12 @@ function App() {
 
   // 選項隨機打亂
   useEffect(() => {
-    const q = questions[currentIdx];
+    const q = questionOrder.length > 0 ? questions[questionOrder[currentIdx]] : questions[currentIdx];
     if (q) {
         const opts = q.originalOptions.map(text => ({ text, isCorrect: text === q.correctText }));
         setShuffledOptions(opts.sort(() => Math.random() - 0.5));
     }
-  }, [currentIdx, questions]);
+  }, [currentIdx, questions, questionOrder]);
 
   useEffect(() => {
       if (user) {
@@ -278,38 +285,60 @@ function App() {
         const safeSelections = data.selections || {};
         setSelections({ p1: safeSelections.p1 || null, p2: safeSelections.p2 || null });
         setTimeLeft(data.timeLeft ?? 30); setShowResult(data.showResult || false); setP2Joined(data.p2Present || false);
+        setQuestionOrder(data.questionOrder || []); 
+        setForfeitedBy(data.forfeitedBy || null); // 🌟 新增：讀取是否有人逃跑
       }
     });
     return () => unsubscribe();
   }, [roomId, myRole, questions]); 
 
-  // 結算分數
+  // 🌟 修改：結算分數 (加入逃跑扣 5 點能量機制的計算)
   useEffect(() => {
-    if (gameOver && myRole === 'p1' && roomId && playerIds.p1 && playerIds.p2) {
-        const roomRef = ref(db, `rooms/${roomId}`);
-        get(roomRef).then((snap) => {
-            if (snap.exists() && !snap.val().statsSaved) {
-                update(roomRef, { statsSaved: true });
-                const p1Win = scores.p1 > scores.p2 ? 1 : 0; 
-                const p2Win = scores.p2 > scores.p1 ? 1 : 0;
-                const p1EnergyChange = scores.p1 > scores.p2 ? 2 : (scores.p1 < scores.p2 ? -1 : 0);
-                const p2EnergyChange = scores.p2 > scores.p1 ? 2 : (scores.p2 < scores.p1 ? -1 : 0);
-                runTransaction(ref(db, `users/${playerIds.p1}`), (d) => { 
-                    if(!d) d={name:names.p1, totalWins:0, totalScore:0, energy:10}; 
-                    d.totalWins=(d.totalWins||0)+p1Win; d.totalScore=(d.totalScore||0)+scores.p1; 
-                    d.energy = Math.max(0, (d.energy !== undefined ? d.energy : 10) + p1EnergyChange);
-                    return d; 
-                });
-                runTransaction(ref(db, `users/${playerIds.p2}`), (d) => { 
-                    if(!d) d={name:names.p2, totalWins:0, totalScore:0, energy:10}; 
-                    d.totalWins=(d.totalWins||0)+p2Win; d.totalScore=(d.totalScore||0)+scores.p2; 
-                    d.energy = Math.max(0, (d.energy !== undefined ? d.energy : 10) + p2EnergyChange);
-                    return d; 
-                });
-            }
-        });
+    if (gameOver && roomId && playerIds.p1 && playerIds.p2) {
+        const isForfeit = !!forfeitedBy;
+        // 如果有人逃跑，就由「沒逃跑」的那方負責結算成績；如果是正常結束，由 p1 負責
+        const isMyResponsibility = isForfeit ? (myRole !== forfeitedBy) : (myRole === 'p1');
+
+        if (isMyResponsibility) {
+            const roomRef = ref(db, `rooms/${roomId}`);
+            get(roomRef).then((snap) => {
+                if (snap.exists() && !snap.val().statsSaved) {
+                    update(roomRef, { statsSaved: true });
+                    
+                    let p1Win = 0, p2Win = 0, p1EnergyChange = 0, p2EnergyChange = 0;
+                    
+                    if (isForfeit) {
+                        // 逃跑結算：逃跑者扣 5，勝利者得 2
+                        if (forfeitedBy === 'p1') {
+                            p2Win = 1; p1EnergyChange = -5; p2EnergyChange = 2; 
+                        } else {
+                            p1Win = 1; p2EnergyChange = -5; p1EnergyChange = 2; 
+                        }
+                    } else {
+                        // 正常結算
+                        p1Win = scores.p1 > scores.p2 ? 1 : 0; 
+                        p2Win = scores.p2 > scores.p1 ? 1 : 0;
+                        p1EnergyChange = scores.p1 > scores.p2 ? 2 : (scores.p1 < scores.p2 ? -1 : 0);
+                        p2EnergyChange = scores.p2 > scores.p1 ? 2 : (scores.p2 < scores.p1 ? -1 : 0);
+                    }
+
+                    runTransaction(ref(db, `users/${playerIds.p1}`), (d) => { 
+                        if(!d) d={name:names.p1, totalWins:0, totalScore:0, energy:10}; 
+                        d.totalWins=(d.totalWins||0)+p1Win; d.totalScore=(d.totalScore||0)+scores.p1; 
+                        d.energy = Math.max(0, (d.energy !== undefined ? d.energy : 10) + p1EnergyChange);
+                        return d; 
+                    });
+                    runTransaction(ref(db, `users/${playerIds.p2}`), (d) => { 
+                        if(!d) d={name:names.p2, totalWins:0, totalScore:0, energy:10}; 
+                        d.totalWins=(d.totalWins||0)+p2Win; d.totalScore=(d.totalScore||0)+scores.p2; 
+                        d.energy = Math.max(0, (d.energy !== undefined ? d.energy : 10) + p2EnergyChange);
+                        return d; 
+                    });
+                }
+            });
+        }
     }
-  }, [gameOver, myRole, roomId, playerIds, scores, names]);
+  }, [gameOver, myRole, roomId, playerIds, scores, names, forfeitedBy]);
 
   // 讀取排行榜
   const fetchLeaderboard = () => {
@@ -322,7 +351,7 @@ function App() {
     });
   };
 
-  // 🌟 讀取題目統計資料 (老師專用)
+  // 讀取題目統計資料 (老師專用)
   const fetchStats = () => {
     get(ref(db, 'questionStats')).then((snapshot) => {
         if (snapshot.exists()) {
@@ -346,7 +375,7 @@ function App() {
     let newScores = { ...scores }; let newStreaks = { ...streaks };
     
     if (myRole === 'p1') {
-        const currentQ = questions[currentIdx];
+        const currentQ = questionOrder.length > 0 ? questions[questionOrder[currentIdx]] : questions[currentIdx];
         if (currentQ) {
             const safeKey = currentQ.question.replace(/[.#$\[\]]/g, "_");
             runTransaction(ref(db, `questionStats/${safeKey}`), (data) => {
@@ -373,7 +402,7 @@ function App() {
       if (nextIdx >= MAX_QUESTIONS) update(roomRef, { gameOver: true }); 
       else update(roomRef, { currentIdx: nextIdx, scores: newScores, streaks: newStreaks, selections: { p1: null, p2: null }, timeLeft: 30, showResult: false, gameOver: false });
     }, 3000);
-  }, [roomId, currentIdx, scores, streaks, selections, showResult, gameOver, myRole, questions]);
+  }, [roomId, currentIdx, scores, streaks, selections, showResult, gameOver, myRole, questions, questionOrder]);
 
   useEffect(() => {
     if (myRole !== 'p1' || showResult || gameOver || !roomId || !p2Joined) return;
@@ -427,7 +456,21 @@ function App() {
     }
     setRoomId(null); setMyRole(null); setGameOver(false); setCurrentIdx(0);
     setShowResult(false); setP2Joined(false); setScores({ p1: 0, p2: 0 });
-    setStreaks({ p1: 0, p2: 0 }); setSelections({ p1: null, p2: null });
+    setStreaks({ p1: 0, p2: 0 }); setSelections({ p1: null, p2: null }); setForfeitedBy(null);
+  };
+
+  // 🌟 新增：玩家手動點擊「離開」按鈕時的處理
+  const handleManualLeave = () => {
+    if (p2Joined && !gameOver && myRole !== 'viewer') {
+        const confirmLeave = window.confirm("⚠️ 警告！遊戲正在進行中，現在離開將會被扣除 5 點能量，並直接判定為敗北！\n\n確定要離開嗎？");
+        if (confirmLeave) {
+            // 宣告自己投降
+            update(ref(db, `rooms/${roomId}`), { gameOver: true, forfeitedBy: myRole });
+            handleReturnToLobby(); // 放棄後直接回到大廳
+        }
+    } else {
+        handleReturnToLobby();
+    }
   };
 
   const handleJoinRoom = (selectedRoomId) => {
@@ -443,9 +486,20 @@ function App() {
       
       if (!data.p1Present) {
         setMyRole('p1'); setRoomId(selectedRoomId); startBGM();
-        // 如果連 P2 也都不在，這是一間幽靈空房，直接大掃除重置！
         if (!data.p2Present) {
-            set(roomRef, { p1Present: true, p2Present: false, names: { p1: user.name, p2: "等待中..." }, playerIds: { p1: user.id, p2: null }, currentIdx: 0, scores: { p1: 0, p2: 0 }, streaks: { p1: 0, p2: 0 }, selections: { p1: null, p2: null }, timeLeft: 30, showResult: false, gameOver: false, statsSaved: false });
+            let randomIndices = [];
+            while (randomIndices.length < 10 && randomIndices.length < questions.length) {
+                let r = Math.floor(Math.random() * questions.length);
+                if (!randomIndices.includes(r)) randomIndices.push(r);
+            }
+            
+            set(roomRef, { 
+                p1Present: true, p2Present: false, names: { p1: user.name, p2: "等待中..." }, 
+                playerIds: { p1: user.id, p2: null }, currentIdx: 0, scores: { p1: 0, p2: 0 }, 
+                streaks: { p1: 0, p2: 0 }, selections: { p1: null, p2: null }, 
+                timeLeft: 30, showResult: false, gameOver: false, statsSaved: false,
+                questionOrder: randomIndices, forfeitedBy: null
+            });
         } else {
             update(roomRef, { p1Present: true, "names/p1": user.name, "playerIds/p1": user.id });
         }
@@ -563,7 +617,6 @@ function App() {
             const isFull = rData.p1Present && rData.p2Present;
             const isEmpty = !rData.p1Present && !rData.p2Present;
             
-            // 💡 關鍵修復：只有房間內有人的時候，才算 inProgress！幽靈房會變回空房。
             const inProgress = (rData.currentIdx > 0 || rData.gameOver) && !isEmpty; 
             const canJoin = user.id === 'teacher' || (!isFull && !inProgress);
             
@@ -591,8 +644,7 @@ function App() {
 
   if (loading) return <div style={{color:'white', padding:'20px', backgroundColor:'#000', height:'100dvh'}}>⏳ 載入中...</div>;
 
-  const currentQ = questions[currentIdx];
-  const mySelText = selections && selections[myRole] ? selections[myRole].text : null;
+  const currentQ = questionOrder.length > 0 ? questions[questionOrder[currentIdx]] : questions[currentIdx];
 
   const getBtnStyle = (opt) => {
     let bgColor = '#222'; let borderColor = '#444'; 
@@ -618,21 +670,35 @@ function App() {
 
   if (gameOver) {
     let resultTitle = ""; let subMessage = ""; let titleColor = "#fbbf24"; 
-    let winnerRole = "tie";
-    if (scores.p1 > scores.p2) winnerRole = "p1";
-    if (scores.p2 > scores.p1) winnerRole = "p2";
-
-    if (winnerRole === "tie") {
-      resultTitle = "🤝 雙方勢均力敵，平手！ 🤝"; subMessage = "兩位同學都非常優秀！";
-    } else if (winnerRole === myRole) {
-      resultTitle = `🎉 恭喜你獲勝！ 🎉`; subMessage = "太厲害了，繼續保持！";
-      titleColor = myRole === 'p1' ? "#60a5fa" : "#f87171"; 
-    } else if (myRole === 'p1' || myRole === 'p2') {
-      resultTitle = `😢 挑戰失敗... 😢`; subMessage = `不要灰心，再接再厲下次一定贏！ 💪`; titleColor = "#9ca3af"; 
+    
+    // 🌟 修改：遊戲結束畫面根據「是否有人逃跑」改變顯示內容
+    if (forfeitedBy) {
+        if (forfeitedBy === myRole) {
+            resultTitle = "🏃‍♂️ 你已逃跑，判定敗北！";
+            subMessage = "中途離開會被扣除 5 點能量喔！";
+            titleColor = "#ef4444";
+        } else {
+            resultTitle = "🎉 對手逃跑了！你獲勝了！ 🎉";
+            subMessage = "不戰而勝！對手已被扣除 5 點能量。";
+            titleColor = "#22c55e";
+        }
     } else {
-      const winnerName = winnerRole === 'p1' ? names.p1 : names.p2;
-      resultTitle = `🎉 恭喜 ${winnerName} 獲勝！ 🎉`; subMessage = "一場精彩的對決！";
-      titleColor = winnerRole === 'p1' ? "#60a5fa" : "#f87171";
+        let winnerRole = "tie";
+        if (scores.p1 > scores.p2) winnerRole = "p1";
+        if (scores.p2 > scores.p1) winnerRole = "p2";
+
+        if (winnerRole === "tie") {
+          resultTitle = "🤝 雙方勢均力敵，平手！ 🤝"; subMessage = "兩位同學都非常優秀！";
+        } else if (winnerRole === myRole) {
+          resultTitle = `🎉 恭喜你獲勝！ 🎉`; subMessage = "太厲害了，繼續保持！";
+          titleColor = myRole === 'p1' ? "#60a5fa" : "#f87171"; 
+        } else if (myRole === 'p1' || myRole === 'p2') {
+          resultTitle = `😢 挑戰失敗... 😢`; subMessage = `不要灰心，再接再厲下次一定贏！ 💪`; titleColor = "#9ca3af"; 
+        } else {
+          const winnerName = winnerRole === 'p1' ? names.p1 : names.p2;
+          resultTitle = `🎉 恭喜 ${winnerName} 獲勝！ 🎉`; subMessage = "一場精彩的對決！";
+          titleColor = winnerRole === 'p1' ? "#60a5fa" : "#f87171";
+        }
     }
 
     return (
@@ -649,51 +715,29 @@ function App() {
     );
   }
 
-  // 🌟 幫你把斷掉的對戰畫面補齊了！
+  // 對戰畫面
   return (
     <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', backgroundColor: '#111', color: '#fff' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '15px', backgroundColor: '#222', alignItems: 'center' }}>
         <div style={{ color: '#60a5fa', fontWeight: 'bold' }}>🔵 {names.p1}<br/><span style={{fontSize:'0.8rem', color:'#888'}}>{selections?.p1 ? '已作答' : '思考中'}</span></div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#fbbf24' }}>{!p2Joined ? '等待中' : `${timeLeft}s`}</div>
-            <button onClick={handleReturnToLobby} style={{ marginTop: '5px', padding: '2px 8px', fontSize: '0.8rem', background: '#444', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>離開</button>
+            {/* 🌟 修改：將直接回大廳改為觸發警告的 handleManualLeave */}
+            <button onClick={handleManualLeave} style={{ marginTop: '5px', padding: '5px 15px', fontSize: '0.9rem', backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>離開</button>
         </div>
         <div style={{ color: '#f87171', fontWeight: 'bold', textAlign: 'right' }}>🔴 {names.p2}<br/><span style={{fontSize:'0.8rem', color:'#888'}}>{selections?.p2 ? '已作答' : '思考中'}</span></div>
       </div>
       
-      <div style={{ flex: 1, padding: '20px', display: 'flex', flexDirection: 'column' }}>
-        {!p2Joined ? (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                <h2 style={{color: '#f59e0b', fontSize: '2rem'}}>等待對手加入中...</h2>
-                <div style={{marginTop: '20px', border: '4px solid rgba(255,255,255,0.1)', borderTop: '4px solid #f59e0b', borderRadius: '50%', width: '40px', height: '40px', animation: 'spin 1s linear infinite'}}></div>
-                <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
-            </div>
-        ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-                    <span style={{ backgroundColor: '#4b5563', padding: '5px 15px', borderRadius: '15px', fontSize: '0.9rem' }}>第 {currentIdx + 1} / {MAX_QUESTIONS} 題 - {currentQ?.category}</span>
-                </div>
-                <div style={{ fontSize: '1.4rem', fontWeight: 'bold', textAlign: 'center', marginBottom: '20px', minHeight: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {renderContent(currentQ?.question)}
-                </div>
-                
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', flex: 1 }}>
-                    {shuffledOptions.map((opt, idx) => (
-                        <button key={idx} 
-                            onClick={() => onSelect(opt)}
-                            disabled={showResult || myRole === 'viewer' || selections?.[myRole]}
-                            style={{ ...getBtnStyle(opt), borderRadius: '10px', fontSize: '1.2rem', color: '#fff', padding: '10px', transition: '0.2s', cursor: (showResult || myRole === 'viewer' || selections?.[myRole]) ? 'default' : 'pointer' }}>
-                            {renderContent(opt.text)}
-                        </button>
-                    ))}
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '20px', fontSize: '1.5rem', fontWeight: 'bold' }}>
-                    <div style={{ color: '#60a5fa' }}>{scores.p1}</div>
-                    <div style={{ color: '#f87171' }}>{scores.p2}</div>
-                </div>
-            </div>
-        )}
+      {/* 題目與選項區 */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', textAlign: 'center' }}>
+        <h2 style={{ marginBottom: '30px', color: '#fbbf24' }}>Q{currentIdx + 1}: {currentQ ? renderContent(currentQ.question) : '載入中...'}</h2>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', width: '100%', maxWidth: '400px' }}>
+            {shuffledOptions.map((opt, i) => (
+                <button key={i} onClick={() => onSelect(opt)} style={{ ...getBtnStyle(opt), padding: '15px', borderRadius: '10px', color: 'white', fontSize: '1.2rem', cursor: myRole === 'viewer' || showResult ? 'default' : 'pointer' }}>
+                    {renderContent(opt.text)}
+                </button>
+            ))}
+        </div>
       </div>
     </div>
   );
