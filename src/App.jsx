@@ -144,16 +144,16 @@ function ChatBoard({ currentUser }) {
 // ==========================================
 // 🌟 遊戲主程式 (App)
 // ==========================================
-// 請保留您原本檔案最上方的 import (例如 React, useState, useEffect, Firebase 等)
-// 以及您的題庫陣列 (questions) 等全域變數
-
 const MAX_QUESTIONS = 10;
+// 這裡給定一個假的 questions 陣列避免報錯，請記得替換回您實際的題庫
+const questions = [
+  { question: "這是一道測試題", originalOptions: ["選項A", "選項B", "選項C", "選項D"], correctText: "選項A", category: "測試" }
+];
 
 function App() {
-  // 這裡假設您原本的狀態宣告 (請依照您實際的狀態變數微調，這裡列出必備的)
-  const [user, setUser] = useState({ id: 'student_' + Math.floor(Math.random()*1000) }); // 假定使用者資訊
+  const [user, setUser] = useState({ id: 'student_' + Math.floor(Math.random()*1000) }); 
   const [roomId, setRoomId] = useState(null);
-  const [myRole, setMyRole] = useState(null); // 'p1', 'p2', 'viewer'
+  const [myRole, setMyRole] = useState(null); 
   const [p2Joined, setP2Joined] = useState(false);
   
   const [questionOrder, setQuestionOrder] = useState([]);
@@ -176,18 +176,15 @@ function App() {
   // 🌟 修正 1：避免選項每秒瘋狂跳動
   // ----------------------------------------------------
   useEffect(() => {
-    // 確保有題目、有題號陣列才執行
     if (questions && questions.length > 0) {
       const q = questionOrder.length > 0 ? questions[questionOrder[currentIdx]] : questions[currentIdx];
       setCurrentQ(q);
       
       if (q && q.originalOptions) {
         const opts = q.originalOptions.map(text => ({ text, isCorrect: text === q.correctText }));
-        // 隨機打亂選項順序
         setShuffledOptions(opts.sort(() => Math.random() - 0.5));
       }
     }
-  // 🛑 注意這裡的依賴陣列加上了 questionOrder.join(',') 避免重複觸發
   // eslint-disable-next-line
   }, [currentIdx, questions, questionOrder.join(',')]);
 
@@ -196,82 +193,68 @@ function App() {
   // 🌟 修正 3 & 4：防偷跑與防作弊機制
   // ----------------------------------------------------
   const onSelect = (opt) => {
-    // 防線一：老師觀戰中、遊戲結束、顯示解答中，不可作答
     if (myRole === 'viewer' || showResult || gameOver || !roomId) return;
     
-    // 防線二：對手還沒加入，禁止偷跑！
     if (!p2Joined) {
       alert("對手還沒加入，請發揮運動員精神等待喔！🏃‍♂️");
       return;
     }
 
-    // 防線三：嚴格查驗身分，不是真的 P1/P2，或是學號對不上，一律阻擋！
     if (myRole !== 'p1' && myRole !== 'p2') return;
     if (user.id !== playerIds[myRole]) {
       alert("您不是這個房間的正式比賽選手，不可作答！");
       return; 
     }
 
-    // 防止自己重複連點兩次
     if (selections && selections[myRole]) return;
 
-    // 播放音效 (如果您有實作 playSound 函式的話)
     // if (opt.isCorrect) playSound('correct'); else playSound('wrong');
-
-    // 正式送出答案至 Firebase (請確認您的 db 變數名稱)
     // set(ref(db, `rooms/${roomId}/selections/${myRole}`), { text: opt.text, isCorrect: opt.isCorrect, time: timeLeft });
     console.log("答案已送出:", opt.text);
   };
 
-  // 離開遊戲或逃跑
   const handleManualLeave = () => {
     if (myRole === 'viewer') {
-      // 老師/觀戰者離開，直接回大廳
       setRoomId(null);
       setMyRole(null);
     } else {
-      // 玩家逃跑，通知 Firebase (請換成您的 Firebase 邏輯)
       // update(ref(db, `rooms/${roomId}`), { forfeitedBy: myRole, gameOver: true });
       alert("您選擇了逃跑！");
     }
   };
 
-  // 返回大廳
   const handleReturnToLobby = () => {
     setRoomId(null);
     setMyRole(null);
     setGameOver(false);
-    // 重置其他狀態...
   };
 
-  // 畫面渲染小幫手 (假定您原本有這些)
-  const renderContent = (text) => text; 
   const getBtnStyle = (opt) => {
-      // 假定您原本有判斷按鈕顏色的邏輯，這裡給個預設值
       return { backgroundColor: '#334155', border: '1px solid #475569' };
   };
 
-
   // ==========================================
-  // 畫面渲染區：如果您還沒加入房間，顯示大廳 (請替換成您的大廳畫面)
+  // 畫面渲染區：大廳
   // ==========================================
   if (!roomId) {
     return (
-      <div style={{ padding: '20px', textAlign: 'center', backgroundColor: '#111', color: '#fff', height: '100vh' }}>
+      <div style={{ padding: '20px', textAlign: 'center', backgroundColor: '#111', color: '#fff', minHeight: '100vh' }}>
         <h1>班級知識對抗賽 🏆</h1>
         <p>歡迎來到遊戲大廳！</p>
-        {/* 這裡放您原本加入房間的按鈕與邏輯 */}
+        <button onClick={() => { setRoomId("room1"); setMyRole("p1"); setP2Joined(true); }} style={{ padding: '10px 20px', marginTop: '20px', cursor: 'pointer', borderRadius: '8px', backgroundColor: '#3b82f6', color: '#fff', border: 'none' }}>
+          測試加入房間 (玩家一)
+        </button>
+        <ChatBoard currentUser={user.id} />
       </div>
     );
   }
 
   // ==========================================
-  // 🌟 結算畫面 (完整版)
+  // 🌟 結算畫面
   // ==========================================
   if (gameOver) {
     let resultTitle = ""; let subMessage = ""; let titleColor = "#fbbf24"; 
     
-    // 遊戲結束畫面根據「是否有人逃跑」改變顯示內容
     if (forfeitedBy) {
         if (forfeitedBy === myRole) {
             resultTitle = "🏃‍♂️ 你已逃跑，判定敗北！";
@@ -322,7 +305,7 @@ function App() {
   }
 
   // ==========================================
-  // 🌟 修正 2：遊戲對戰介面 (包含完整分數列)
+  // 🌟 遊戲對戰介面
   // ==========================================
   return (
     <div style={{ height: '100dvh', padding: '10px 20px', backgroundColor: '#000', color: '#fff', display: 'flex', flexDirection: 'column' }}>
@@ -388,13 +371,4 @@ function App() {
   );
 }
 
-export default App;if (forfeitedBy) {
-    if (forfeitedBy === myRole) {
-        resultTitle = "🏃‍♂️ 你已逃跑，判定敗北！";
-        subMessage = "中途離開會被扣除 5 點能量喔！";
-        titleColor = "#ef4444";
-    } else {
-        resultTitle = "🎉 對手逃跑了！你獲勝了！ 🎉";
-        subMessage = "不戰而勝！對手已被扣除 5 點能量。";
-        titleColor = "#22c55e";
-    }
+export default App;
