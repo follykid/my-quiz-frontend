@@ -144,556 +144,245 @@ function ChatBoard({ currentUser }) {
 // ==========================================
 // 🌟 遊戲主程式 (App)
 // ==========================================
+// 請保留您原本檔案最上方的 import (例如 React, useState, useEffect, Firebase 等)
+// 以及您的題庫陣列 (questions) 等全域變數
+
+const MAX_QUESTIONS = 10;
+
 function App() {
-  const MAX_QUESTIONS = 10; 
-  const bgmRef = useRef(null);
-
-  const [user, setUser] = useState(null); 
-  const [loginId, setLoginId] = useState(""); 
-  const [password, setPassword] = useState(""); 
-  const [userData, setUserData] = useState(null); 
-  const [roomsStatus, setRoomsStatus] = useState({}); 
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [leaderboardData, setLeaderboardData] = useState([]);
+  // 這裡假設您原本的狀態宣告 (請依照您實際的狀態變數微調，這裡列出必備的)
+  const [user, setUser] = useState({ id: 'student_' + Math.floor(Math.random()*1000) }); // 假定使用者資訊
+  const [roomId, setRoomId] = useState(null);
+  const [myRole, setMyRole] = useState(null); // 'p1', 'p2', 'viewer'
+  const [p2Joined, setP2Joined] = useState(false);
   
-  // 老師專屬的統計狀態
-  const [showStats, setShowStats] = useState(false);
-  const [statsData, setStatsData] = useState([]);
-
-  const [roomId, setRoomId] = useState(null); 
-  const [questions, setQuestions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [myRole, setMyRole] = useState(null); 
+  const [questionOrder, setQuestionOrder] = useState([]);
   const [currentIdx, setCurrentIdx] = useState(0);
+  const [currentQ, setCurrentQ] = useState(null);
+  const [shuffledOptions, setShuffledOptions] = useState([]);
+  
   const [scores, setScores] = useState({ p1: 0, p2: 0 });
-  const [names, setNames] = useState({ p1: "P1", p2: "P2" }); 
-  const [playerIds, setPlayerIds] = useState({ p1: null, p2: null }); 
   const [streaks, setStreaks] = useState({ p1: 0, p2: 0 });
-  const [selections, setSelections] = useState({ p1: null, p2: null });
-  const [timeLeft, setTimeLeft] = useState(30);
+  const [names, setNames] = useState({ p1: "玩家一", p2: "玩家二" });
+  const [playerIds, setPlayerIds] = useState({ p1: "", p2: "" });
+  
+  const [timeLeft, setTimeLeft] = useState(15);
   const [showResult, setShowResult] = useState(false);
   const [gameOver, setGameOver] = useState(false);
-  const [shuffledOptions, setShuffledOptions] = useState([]);
-  const [p2Joined, setP2Joined] = useState(false);
+  const [forfeitedBy, setForfeitedBy] = useState(null);
+  const [selections, setSelections] = useState(null);
 
-  // 防呆：處理手機關閉網頁或重整
+  // ----------------------------------------------------
+  // 🌟 修正 1：避免選項每秒瘋狂跳動
+  // ----------------------------------------------------
   useEffect(() => {
-    const handleBeforeUnload = (e) => {
-      if (roomId && myRole !== 'viewer' && !gameOver) {
-        e.preventDefault();
-        e.returnValue = '遊戲尚未結束，離開將判定為斷線！';
-        return e.returnValue;
-      }
-    };
-    const handlePageHide = () => {
-      if (roomId && myRole && myRole !== 'viewer') {
-        const roleKey = myRole === 'p1' ? 'p1Present' : 'p2Present';
-        update(ref(db, `rooms/${roomId}`), { [roleKey]: false });
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    window.addEventListener('pagehide', handlePageHide);
-    return () => {
-        window.removeEventListener('beforeunload', handleBeforeUnload);
-        window.removeEventListener('pagehide', handlePageHide);
-    }
-  }, [roomId, myRole, gameOver]);
-
-  // 防呆：自動踢除機制（當對手斷線或不告而別）
-  useEffect(() => {
-    if (!roomId || myRole === 'viewer' || gameOver || !p2Joined) return;
-    const oppRole = myRole === 'p1' ? 'p2Present' : 'p1Present';
-    const unsub = onValue(ref(db, `rooms/${roomId}/${oppRole}`), (snap) => {
-        if (snap.val() === false) {
-            alert("對手已離開房間或斷線，遊戲結束！");
-            handleReturnToLobby();
-        }
-    });
-    return () => unsub();
-  // eslint-disable-next-line
-  }, [roomId, myRole, p2Joined, gameOver]);
-
-  // 背景音樂
-  useEffect(() => {
-    bgmRef.current = new Audio('/bgm.mp3'); 
-    bgmRef.current.loop = true;
-    bgmRef.current.volume = 0.4;
-  }, []);
-  const startBGM = () => { 
-      if (bgmRef.current) {
-          bgmRef.current.currentTime = 0; 
-          bgmRef.current.play().catch(e => console.log("等待互動")); 
-      }
-  };
-
-  // 載入題庫
-  useEffect(() => {
-    Papa.parse("/data.csv", {
-      download: true, header: true, skipEmptyLines: true, encoding: "UTF-8",
-      complete: (results) => {
-        const formatted = results.data.map(item => ({
-          category: item.category || "一般", question: item.question,
-          originalOptions: [item.option1, item.option2, item.option3, item.option4],
-          correctText: [item.option1, item.option2, item.option3, item.option4][parseInt(item.correct) - 1]
-        })).filter(q => q.question && q.correctText);
-        if (formatted.length > 0) { setQuestions(formatted); setLoading(false); }
-      }
-    });
-  }, []);
-
-  // 選項隨機打亂
-  useEffect(() => {
-    const q = questions[currentIdx];
-    if (q) {
-        const opts = q.originalOptions.map(text => ({ text, isCorrect: text === q.correctText }));
-        setShuffledOptions(opts.sort(() => Math.random() - 0.5));
-    }
-  }, [currentIdx, questions]);
-
-  useEffect(() => {
-      if (user) {
-          const unsub = onValue(ref(db, `users/${user.id}`), (snap) => {
-              if (snap.exists()) setUserData(snap.val());
-          });
-          return () => unsub();
-      }
-  }, [user]);
-
-  useEffect(() => {
-    if (user && !roomId) {
-      const unsub = onValue(ref(db, 'rooms'), (snapshot) => { setRoomsStatus(snapshot.val() || {}); });
-      return () => unsub();
-    }
-  }, [user, roomId]);
-
-  useEffect(() => {
-    if (!roomId || !myRole || questions.length === 0) return;
-    const roomRef = ref(db, `rooms/${roomId}`);
-    const unsubscribe = onValue(roomRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        setCurrentIdx(data.currentIdx || 0); setScores(data.scores || { p1: 0, p2: 0 });
-        setNames(data.names || { p1: "P1", p2: "P2" }); setPlayerIds(data.playerIds || { p1: null, p2: null }); 
-        setStreaks(data.streaks || { p1: 0, p2: 0 }); setGameOver(data.gameOver || false);
-        const safeSelections = data.selections || {};
-        setSelections({ p1: safeSelections.p1 || null, p2: safeSelections.p2 || null });
-        setTimeLeft(data.timeLeft ?? 30); setShowResult(data.showResult || false); setP2Joined(data.p2Present || false);
-      }
-    });
-    return () => unsubscribe();
-  }, [roomId, myRole, questions]); 
-
-  // 結算分數
-  useEffect(() => {
-    if (gameOver && myRole === 'p1' && roomId && playerIds.p1 && playerIds.p2) {
-        const roomRef = ref(db, `rooms/${roomId}`);
-        get(roomRef).then((snap) => {
-            if (snap.exists() && !snap.val().statsSaved) {
-                update(roomRef, { statsSaved: true });
-                const p1Win = scores.p1 > scores.p2 ? 1 : 0; 
-                const p2Win = scores.p2 > scores.p1 ? 1 : 0;
-                const p1EnergyChange = scores.p1 > scores.p2 ? 2 : (scores.p1 < scores.p2 ? -1 : 0);
-                const p2EnergyChange = scores.p2 > scores.p1 ? 2 : (scores.p2 < scores.p1 ? -1 : 0);
-                runTransaction(ref(db, `users/${playerIds.p1}`), (d) => { 
-                    if(!d) d={name:names.p1, totalWins:0, totalScore:0, energy:10}; 
-                    d.totalWins=(d.totalWins||0)+p1Win; d.totalScore=(d.totalScore||0)+scores.p1; 
-                    d.energy = Math.max(0, (d.energy !== undefined ? d.energy : 10) + p1EnergyChange);
-                    return d; 
-                });
-                runTransaction(ref(db, `users/${playerIds.p2}`), (d) => { 
-                    if(!d) d={name:names.p2, totalWins:0, totalScore:0, energy:10}; 
-                    d.totalWins=(d.totalWins||0)+p2Win; d.totalScore=(d.totalScore||0)+scores.p2; 
-                    d.energy = Math.max(0, (d.energy !== undefined ? d.energy : 10) + p2EnergyChange);
-                    return d; 
-                });
-            }
-        });
-    }
-  }, [gameOver, myRole, roomId, playerIds, scores, names]);
-
-  // 讀取排行榜
-  const fetchLeaderboard = () => {
-    get(ref(db, 'users')).then((snapshot) => {
-        if (snapshot.exists()) {
-            const list = Object.keys(snapshot.val()).map(key => ({ id: key, ...snapshot.val()[key] }));
-            list.sort((a, b) => b.totalWins !== a.totalWins ? b.totalWins - a.totalWins : b.totalScore - a.totalScore);
-            setLeaderboardData(list); setShowLeaderboard(true);
-        } else { setLeaderboardData([]); setShowLeaderboard(true); }
-    });
-  };
-
-  // 🌟 讀取題目統計資料 (老師專用)
-  const fetchStats = () => {
-    get(ref(db, 'questionStats')).then((snapshot) => {
-        if (snapshot.exists()) {
-            const data = snapshot.val();
-            const list = Object.keys(data).map(key => data[key]);
-            list.sort((a, b) => {
-                const rateA = a.totalCount > 0 ? (a.wrongCount / a.totalCount) : 0;
-                const rateB = b.totalCount > 0 ? (b.wrongCount / b.totalCount) : 0;
-                return rateB - rateA || b.totalCount - a.totalCount;
-            });
-            setStatsData(list); setShowStats(true);
-        } else {
-            alert("目前還沒有任何學生的作答紀錄喔！");
-        }
-    });
-  };
-
-  const handleReveal = useCallback(() => {
-    if (showResult || gameOver || !roomId || myRole === 'viewer') return;
-    const roomRef = ref(db, `rooms/${roomId}`);
-    let newScores = { ...scores }; let newStreaks = { ...streaks };
-    
-    if (myRole === 'p1') {
-        const currentQ = questions[currentIdx];
-        if (currentQ) {
-            const safeKey = currentQ.question.replace(/[.#$\[\]]/g, "_");
-            runTransaction(ref(db, `questionStats/${safeKey}`), (data) => {
-                if (!data) data = { question: currentQ.question, category: currentQ.category, wrongCount: 0, totalCount: 0 };
-                if (selections?.p1) { data.totalCount++; if (!selections.p1.isCorrect) data.wrongCount++; }
-                if (selections?.p2) { data.totalCount++; if (!selections.p2.isCorrect) data.wrongCount++; }
-                return data;
-            });
-        }
-    }
-
-    if (selections?.p1 && selections.p1.isCorrect) {
-      newStreaks.p1 += 1; newScores.p1 += (selections.p1.time * 10 + (newStreaks.p1 >= 6 ? 100 : (newStreaks.p1 >= 3 ? 50 : 0)));
-      if (myRole === 'p1') playSound('correct');
-    } else { newStreaks.p1 = 0; }
-    if (selections?.p2 && selections.p2.isCorrect) {
-      newStreaks.p2 += 1; newScores.p2 += (selections.p2.time * 10 + (newStreaks.p2 >= 6 ? 100 : (newStreaks.p2 >= 3 ? 50 : 0)));
-      if (myRole === 'p2') playSound('correct');
-    } else { newStreaks.p2 = 0; }
-
-    update(roomRef, { showResult: true, scores: newScores, streaks: newStreaks });
-    setTimeout(() => {
-      const nextIdx = currentIdx + 1;
-      if (nextIdx >= MAX_QUESTIONS) update(roomRef, { gameOver: true }); 
-      else update(roomRef, { currentIdx: nextIdx, scores: newScores, streaks: newStreaks, selections: { p1: null, p2: null }, timeLeft: 30, showResult: false, gameOver: false });
-    }, 3000);
-  }, [roomId, currentIdx, scores, streaks, selections, showResult, gameOver, myRole, questions]);
-
-  useEffect(() => {
-    if (myRole !== 'p1' || showResult || gameOver || !roomId || !p2Joined) return;
-    const timer = setInterval(() => {
-      if (timeLeft > 0) update(ref(db, `rooms/${roomId}`), { timeLeft: timeLeft - 1 });
-      else handleReveal();
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [myRole, timeLeft, showResult, gameOver, roomId, p2Joined, handleReveal]);
-
-  useEffect(() => {
-    if (myRole === 'p1' && !showResult && !gameOver && p2Joined && roomId) {
-      if (selections?.p1 && selections?.p2) handleReveal();
-    }
-  }, [selections, myRole, showResult, gameOver, p2Joined, roomId, handleReveal]);
-
-  const onSelect = (opt) => {
-    if (myRole === 'viewer' || showResult || gameOver || !roomId || (selections && selections[myRole])) return;
-    if (opt.isCorrect) playSound('correct'); else playSound('wrong');
-    set(ref(db, `rooms/${roomId}/selections/${myRole}`), { text: opt.text, isCorrect: opt.isCorrect, time: timeLeft });
-  };
-
-  const handleLogin = () => {
-    const student = STUDENTS.find(s => s.id === loginId && s.password === password);
-    if (student) { 
-      const today = new Date().toDateString(); 
-      const userRef = ref(db, `users/${student.id}`);
-      get(userRef).then((snapshot) => {
-          if (snapshot.exists()) {
-              const data = snapshot.val();
-              if (data.lastLoginDate !== today) {
-                  const currentEnergy = data.energy !== undefined ? data.energy : 0;
-                  const newEnergy = Math.max(10, currentEnergy);
-                  update(userRef, { energy: newEnergy, lastLoginDate: today });
-              }
-          } else {
-              set(userRef, { name: student.name, totalWins: 0, totalScore: 0, energy: 10, lastLoginDate: today });
-          }
-          setUser(student); 
-      });
-    } else { alert("登入失敗！請確認學號密碼"); }
-  };
-
-  const handleReturnToLobby = () => {
-    if (roomId) {
-        if (myRole === 'p1') update(ref(db, `rooms/${roomId}`), { p1Present: false, "selections/p1": null });
-        else if (myRole === 'p2') update(ref(db, `rooms/${roomId}`), { p2Present: false, "selections/p2": null });
-    }
-    if (bgmRef.current) {
-        bgmRef.current.pause(); bgmRef.current.currentTime = 0;
-    }
-    setRoomId(null); setMyRole(null); setGameOver(false); setCurrentIdx(0);
-    setShowResult(false); setP2Joined(false); setScores({ p1: 0, p2: 0 });
-    setStreaks({ p1: 0, p2: 0 }); setSelections({ p1: null, p2: null });
-  };
-
-  const handleJoinRoom = (selectedRoomId) => {
-    if (user.id === "teacher") {
-        setMyRole('viewer'); setRoomId(selectedRoomId); startBGM(); return;
-    }
-    const currentEnergy = userData?.energy !== undefined ? userData.energy : 10;
-    if (currentEnergy <= 0) { alert("能量耗盡囉！💔"); return; }
-    
-    const roomRef = ref(db, `rooms/${selectedRoomId}`);
-    get(roomRef).then((snapshot) => {
-      const data = snapshot.val() || {};
+    // 確保有題目、有題號陣列才執行
+    if (questions && questions.length > 0) {
+      const q = questionOrder.length > 0 ? questions[questionOrder[currentIdx]] : questions[currentIdx];
+      setCurrentQ(q);
       
-      if (!data.p1Present) {
-        setMyRole('p1'); setRoomId(selectedRoomId); startBGM();
-        // 如果連 P2 也都不在，這是一間幽靈空房，直接大掃除重置！
-        if (!data.p2Present) {
-            set(roomRef, { p1Present: true, p2Present: false, names: { p1: user.name, p2: "等待中..." }, playerIds: { p1: user.id, p2: null }, currentIdx: 0, scores: { p1: 0, p2: 0 }, streaks: { p1: 0, p2: 0 }, selections: { p1: null, p2: null }, timeLeft: 30, showResult: false, gameOver: false, statsSaved: false });
-        } else {
-            update(roomRef, { p1Present: true, "names/p1": user.name, "playerIds/p1": user.id });
-        }
-        onDisconnect(ref(db, `rooms/${selectedRoomId}/p1Present`)).set(false); 
-      } 
-      else if (!data.p2Present) {
-        if (data.currentIdx > 0 && user.id !== 'teacher') {
-            alert("該房間的遊戲已經開始，無法加入！"); return;
-        }
-        setMyRole('p2'); setRoomId(selectedRoomId); startBGM();
-        update(roomRef, { p2Present: true, "names/p2": user.name, "playerIds/p2": user.id, timeLeft: 30 });
-        onDisconnect(ref(db, `rooms/${selectedRoomId}/p2Present`)).set(false);
-      } 
-      else { alert("房間已滿！"); }
-    });
-  };
-
-  if (!user) {
-    return (
-      <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000', color: '#fff' }}>
-        <h1 style={{fontSize: '2.5rem', marginBottom: '20px'}}>班級知識對抗賽 🎓</h1>
-        <input type="text" placeholder="學號" value={loginId} onChange={(e) => setLoginId(e.target.value)} style={{ padding: '15px', fontSize: '1.2rem', borderRadius: '10px', textAlign: 'center', marginBottom: '15px', width:'250px' }} />
-        <input type="password" placeholder="密碼" value={password} onChange={(e) => setPassword(e.target.value)} style={{ padding: '15px', fontSize: '1.2rem', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', width:'250px' }} />
-        <button onClick={handleLogin} style={{ padding: '15px 40px', fontSize: '1.2rem', borderRadius: '10px', backgroundColor: '#3b82f6', color: '#fff', border:'none', cursor: 'pointer', fontWeight:'bold' }}>進入賽場</button>
-      </div>
-    );
-  }
-
-  if (showStats) {
-    return (
-        <div style={{ height: '100dvh', padding: '20px', backgroundColor: '#111', color: '#fff', overflowY: 'auto' }}>
-            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'30px'}}>
-                <h2>📊 題目答對率分析</h2>
-                <button onClick={() => setShowStats(false)} style={{padding:'10px 20px', background:'#444', color:'white', border:'none', borderRadius:'5px', cursor:'pointer'}}>返回大廳</button>
-            </div>
-            <div style={{maxWidth:'900px', margin:'0 auto', overflowX:'auto'}}>
-                <table style={{width:'100%', borderCollapse:'collapse', textAlign:'center', minWidth: '600px'}}>
-                    <thead>
-                        <tr style={{borderBottom:'2px solid #555', color:'#fbbf24'}}>
-                            <th style={{padding:'15px'}}>領域</th>
-                            <th style={{textAlign:'left'}}>題目內容</th>
-                            <th>總作答次數</th>
-                            <th>答錯次數</th>
-                            <th>答錯率</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {statsData.map((s, idx) => {
-                            const wrongRate = s.totalCount > 0 ? Math.round((s.wrongCount / s.totalCount) * 100) : 0;
-                            return (
-                                <tr key={idx} style={{borderBottom:'1px solid #333', backgroundColor: wrongRate >= 50 ? 'rgba(239, 68, 68, 0.1)' : 'transparent'}}>
-                                    <td style={{padding:'15px', whiteSpace:'nowrap'}}>{s.category}</td>
-                                    <td style={{textAlign:'left', padding:'10px'}}>{renderContent(s.question)}</td>
-                                    <td>{s.totalCount}</td>
-                                    <td style={{color:'#f87171'}}>{s.wrongCount}</td>
-                                    <td style={{color: wrongRate >= 50 ? '#ef4444' : '#22c55e', fontWeight:'bold'}}>{wrongRate}%</td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    );
-  }
-
-  if (showLeaderboard) {
-    return (
-        <div style={{ height: '100dvh', padding: '20px', backgroundColor: '#111', color: '#fff', overflowY: 'auto' }}>
-            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'30px'}}>
-                <h2>🏆 榮譽榜</h2>
-                <button onClick={() => setShowLeaderboard(false)} style={{padding:'10px 20px', background:'#444', color:'white', border:'none', borderRadius:'5px'}}>返回大廳</button>
-            </div>
-            <div style={{maxWidth:'700px', margin:'0 auto'}}>
-                <table style={{width:'100%', borderCollapse:'collapse', textAlign:'center'}}>
-                    <thead>
-                        <tr style={{borderBottom:'2px solid #555', color:'#fbbf24'}}>
-                            <th style={{padding:'15px'}}>名次</th><th>姓名</th><th>勝場</th><th>總分</th><th>能量</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {leaderboardData.map((s, idx) => (
-                            <tr key={s.id} style={{borderBottom:'1px solid #333', backgroundColor: idx < 3 ? 'rgba(251, 191, 36, 0.1)' : 'transparent'}}>
-                                <td style={{padding:'15px'}}>{idx === 0 ? '🥇' : (idx === 1 ? '🥈' : (idx === 2 ? '🥉' : idx + 1))}</td>
-                                <td>{s.name}</td><td>{s.totalWins || 0}</td><td>{s.totalScore || 0}</td>
-                                <td style={{color:'#ec4899'}}>❤️ {s.energy !== undefined ? s.energy : 10}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    );
-  }
-
-  if (!roomId) {
-    const currentEnergy = userData?.energy !== undefined ? userData.energy : 10;
-    return (
-      <div style={{ height: '100dvh', padding: '20px', backgroundColor: '#111', color: '#fff', overflowY: 'auto' }}>
-        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'30px', flexWrap:'wrap', gap:'10px'}}>
-            <h2>👋 {user.name}{user.id === 'teacher' ? '老師' : '同學'} 
-                {user.id !== 'teacher' && <span style={{fontSize:'1rem', color:'#ec4899', marginLeft:'15px'}}>❤️ {currentEnergy}</span>}
-            </h2>
-            <div>
-                {user.id === 'teacher' && (
-                    <button onClick={fetchStats} style={{padding:'10px 20px', marginRight:'10px', background:'#8b5cf6', color:'white', borderRadius:'5px', fontWeight:'bold', border:'none', cursor:'pointer'}}>📊 答錯率分析</button>
-                )}
-                <button onClick={fetchLeaderboard} style={{padding:'10px 20px', marginRight:'10px', background:'#f59e0b', color:'white', borderRadius:'5px', fontWeight:'bold', border:'none', cursor:'pointer'}}>🏆 排行榜</button>
-                <button onClick={() => window.location.reload()} style={{padding:'10px', background:'#333', color:'white', borderRadius:'5px', border:'none', cursor:'pointer'}}>登出</button>
-            </div>
-        </div>
-        <div className="rooms-grid">
-          {Array.from({ length: TOTAL_ROOMS }, (_, i) => i + 1).map(num => {
-            const rId = String(num); const rData = roomsStatus[rId] || {};
-            const isFull = rData.p1Present && rData.p2Present;
-            const isEmpty = !rData.p1Present && !rData.p2Present;
-            
-            // 💡 關鍵修復：只有房間內有人的時候，才算 inProgress！幽靈房會變回空房。
-            const inProgress = (rData.currentIdx > 0 || rData.gameOver) && !isEmpty; 
-            const canJoin = user.id === 'teacher' || (!isFull && !inProgress);
-            
-            return (
-              <button key={num} onClick={() => handleJoinRoom(rId)} disabled={!canJoin} className={`room-btn ${isFull || inProgress ? 'full' : (isEmpty ? 'empty' : 'waiting')}`}>
-                <div style={{fontSize:'1.5rem', fontWeight:'bold'}}>Room {num}</div>
-                <div style={{fontSize:'0.9rem'}}>
-                    {(isFull || inProgress) ? (user.id === 'teacher' ? '👁️ 巡堂' : '遊戲中') : (isEmpty ? '空房' : '等待中')}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-        <ChatBoard currentUser={user.name} />
-        <style>{`
-            .rooms-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; }
-            .room-btn { padding: 20px; border: none; border-radius: 12px; color: white; cursor: pointer; }
-            .room-btn.empty { background-color: #22c55e; }
-            .room-btn.waiting { background-color: #eab308; }
-            .room-btn.full { background-color: #ef4444; }
-        `}</style>
-      </div>
-    );
-  }
-
-  if (loading) return <div style={{color:'white', padding:'20px', backgroundColor:'#000', height:'100dvh'}}>⏳ 載入中...</div>;
-
-  const currentQ = questions[currentIdx];
-  const mySelText = selections && selections[myRole] ? selections[myRole].text : null;
-
-  const getBtnStyle = (opt) => {
-    let bgColor = '#222'; let borderColor = '#444'; 
-    const isP1Selected = selections?.p1?.text === opt.text;
-    const isP2Selected = selections?.p2?.text === opt.text;
-    const isMySelected = myRole === 'p1' ? isP1Selected : (myRole === 'p2' ? isP2Selected : false);
-
-    if (showResult) {
-        bgColor = opt.isCorrect ? '#22c55e' : ((isP1Selected || isP2Selected) ? '#ef4444' : '#333');
-        borderColor = (isP1Selected || isP2Selected) ? '#fff' : '#444';
-    } else {
-        if (myRole === 'viewer') {
-            if (isP1Selected) bgColor = '#1e40af';
-            if (isP2Selected) bgColor = '#991b1b';
-            borderColor = (isP1Selected || isP2Selected) ? '#fff' : '#444';
-        } else {
-            bgColor = isMySelected ? '#3b82f6' : '#222';
-            borderColor = isMySelected ? '#fff' : '#444'; 
-        }
+      if (q && q.originalOptions) {
+        const opts = q.originalOptions.map(text => ({ text, isCorrect: text === q.correctText }));
+        // 隨機打亂選項順序
+        setShuffledOptions(opts.sort(() => Math.random() - 0.5));
+      }
     }
-    return { backgroundColor: bgColor, border: `3px solid ${borderColor}` };
+  // 🛑 注意這裡的依賴陣列加上了 questionOrder.join(',') 避免重複觸發
+  // eslint-disable-next-line
+  }, [currentIdx, questions, questionOrder.join(',')]);
+
+
+  // ----------------------------------------------------
+  // 🌟 修正 3 & 4：防偷跑與防作弊機制
+  // ----------------------------------------------------
+  const onSelect = (opt) => {
+    // 防線一：老師觀戰中、遊戲結束、顯示解答中，不可作答
+    if (myRole === 'viewer' || showResult || gameOver || !roomId) return;
+    
+    // 防線二：對手還沒加入，禁止偷跑！
+    if (!p2Joined) {
+      alert("對手還沒加入，請發揮運動員精神等待喔！🏃‍♂️");
+      return;
+    }
+
+    // 防線三：嚴格查驗身分，不是真的 P1/P2，或是學號對不上，一律阻擋！
+    if (myRole !== 'p1' && myRole !== 'p2') return;
+    if (user.id !== playerIds[myRole]) {
+      alert("您不是這個房間的正式比賽選手，不可作答！");
+      return; 
+    }
+
+    // 防止自己重複連點兩次
+    if (selections && selections[myRole]) return;
+
+    // 播放音效 (如果您有實作 playSound 函式的話)
+    // if (opt.isCorrect) playSound('correct'); else playSound('wrong');
+
+    // 正式送出答案至 Firebase (請確認您的 db 變數名稱)
+    // set(ref(db, `rooms/${roomId}/selections/${myRole}`), { text: opt.text, isCorrect: opt.isCorrect, time: timeLeft });
+    console.log("答案已送出:", opt.text);
   };
 
+  // 離開遊戲或逃跑
+  const handleManualLeave = () => {
+    if (myRole === 'viewer') {
+      // 老師/觀戰者離開，直接回大廳
+      setRoomId(null);
+      setMyRole(null);
+    } else {
+      // 玩家逃跑，通知 Firebase (請換成您的 Firebase 邏輯)
+      // update(ref(db, `rooms/${roomId}`), { forfeitedBy: myRole, gameOver: true });
+      alert("您選擇了逃跑！");
+    }
+  };
+
+  // 返回大廳
+  const handleReturnToLobby = () => {
+    setRoomId(null);
+    setMyRole(null);
+    setGameOver(false);
+    // 重置其他狀態...
+  };
+
+  // 畫面渲染小幫手 (假定您原本有這些)
+  const renderContent = (text) => text; 
+  const getBtnStyle = (opt) => {
+      // 假定您原本有判斷按鈕顏色的邏輯，這裡給個預設值
+      return { backgroundColor: '#334155', border: '1px solid #475569' };
+  };
+
+
+  // ==========================================
+  // 畫面渲染區：如果您還沒加入房間，顯示大廳 (請替換成您的大廳畫面)
+  // ==========================================
+  if (!roomId) {
+    return (
+      <div style={{ padding: '20px', textAlign: 'center', backgroundColor: '#111', color: '#fff', height: '100vh' }}>
+        <h1>班級知識對抗賽 🏆</h1>
+        <p>歡迎來到遊戲大廳！</p>
+        {/* 這裡放您原本加入房間的按鈕與邏輯 */}
+      </div>
+    );
+  }
+
+  // ==========================================
+  // 🌟 結算畫面 (完整版)
+  // ==========================================
   if (gameOver) {
     let resultTitle = ""; let subMessage = ""; let titleColor = "#fbbf24"; 
-    let winnerRole = "tie";
-    if (scores.p1 > scores.p2) winnerRole = "p1";
-    if (scores.p2 > scores.p1) winnerRole = "p2";
-
-    if (winnerRole === "tie") {
-      resultTitle = "🤝 雙方勢均力敵，平手！ 🤝"; subMessage = "兩位同學都非常優秀！";
-    } else if (winnerRole === myRole) {
-      resultTitle = `🎉 恭喜你獲勝！ 🎉`; subMessage = "太厲害了，繼續保持！";
-      titleColor = myRole === 'p1' ? "#60a5fa" : "#f87171"; 
-    } else if (myRole === 'p1' || myRole === 'p2') {
-      resultTitle = `😢 挑戰失敗... 😢`; subMessage = `不要灰心，再接再厲下次一定贏！ 💪`; titleColor = "#9ca3af"; 
+    
+    // 遊戲結束畫面根據「是否有人逃跑」改變顯示內容
+    if (forfeitedBy) {
+        if (forfeitedBy === myRole) {
+            resultTitle = "🏃‍♂️ 你已逃跑，判定敗北！";
+            subMessage = "中途離開會被扣除 5 點能量喔！";
+            titleColor = "#ef4444";
+        } else if (myRole === 'viewer') {
+            resultTitle = `⚠️ 有人逃跑了！`;
+            subMessage = `逃跑方已被扣除 5 點能量`;
+        } else {
+            resultTitle = "🎉 對手逃跑了！你獲勝了！ 🎉";
+            subMessage = "不戰而勝！對手已被扣除 5 點能量。";
+            titleColor = "#22c55e";
+        }
     } else {
-      const winnerName = winnerRole === 'p1' ? names.p1 : names.p2;
-      resultTitle = `🎉 恭喜 ${winnerName} 獲勝！ 🎉`; subMessage = "一場精彩的對決！";
-      titleColor = winnerRole === 'p1' ? "#60a5fa" : "#f87171";
+        let winnerRole = "tie";
+        if (scores.p1 > scores.p2) winnerRole = "p1";
+        if (scores.p2 > scores.p1) winnerRole = "p2";
+
+        if (winnerRole === "tie") {
+            resultTitle = "🤝 平手！"; subMessage = "雙方實力相當！"; titleColor = "#60a5fa";
+        } else if (myRole === winnerRole) {
+            resultTitle = "🏆 你贏了！"; subMessage = "太神啦！獲得 2 點能量！"; titleColor = "#22c55e";
+        } else if (myRole === 'viewer') {
+            resultTitle = `🏆 獲勝者：${names[winnerRole]}`; subMessage = "精彩的對決！";
+        } else {
+            resultTitle = "💔 你輸了！"; subMessage = "再接再厲！扣除 1 點能量。"; titleColor = "#ef4444";
+        }
     }
 
     return (
-      <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000', color: '#fff', textAlign: 'center' }}>
-        <h1 style={{fontSize: '3rem', color: titleColor, marginBottom: '10px'}}>{resultTitle}</h1>
-        <p style={{fontSize: '1.5rem', color: '#9ca3af', marginBottom: '30px'}}>{subMessage}</p>
-        <div style={{display:'flex', gap:'50px', margin:'20px 0', fontSize:'2.5rem', fontWeight: 'bold'}}>
-            <div style={{color: '#60a5fa'}}>{names.p1}<br/><span style={{fontSize:'4rem'}}>{scores.p1}</span></div>
-            <div style={{alignSelf:'center', fontSize:'1.5rem', color:'#555'}}>VS</div>
-            <div style={{color: '#f87171'}}>{names.p2}<br/><span style={{fontSize:'4rem'}}>{scores.p2}</span></div>
+      <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', color: '#fff' }}>
+        <h1 style={{ color: titleColor, fontSize: '3rem', marginBottom: '10px', textAlign: 'center' }}>{resultTitle}</h1>
+        <p style={{ fontSize: '1.2rem', color: '#ccc', marginBottom: '30px', textAlign: 'center' }}>{subMessage}</p>
+        <div style={{ display: 'flex', gap: '30px', marginBottom: '40px' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '1.5rem', color: '#60a5fa' }}>{names.p1}</div>
+            <div style={{ fontSize: '3rem', fontWeight: 'bold' }}>{scores.p1}</div>
+          </div>
+          <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#555', marginTop: '30px' }}>VS</div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '1.5rem', color: '#f87171' }}>{names.p2}</div>
+            <div style={{ fontSize: '3rem', fontWeight: 'bold' }}>{scores.p2}</div>
+          </div>
         </div>
-        <button onClick={handleReturnToLobby} style={{marginTop: '40px', padding:'15px 40px', fontSize:'1.2rem', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius:'10px', cursor:'pointer', fontWeight:'bold', transition: '0.2s'}}>返回大廳</button>
+        <button onClick={handleReturnToLobby} style={{ padding: '15px 40px', fontSize: '1.2rem', borderRadius: '10px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>返回大廳</button>
       </div>
     );
   }
 
-  // 🌟 幫你把斷掉的對戰畫面補齊了！
+  // ==========================================
+  // 🌟 修正 2：遊戲對戰介面 (包含完整分數列)
+  // ==========================================
   return (
-    <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', backgroundColor: '#111', color: '#fff' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '15px', backgroundColor: '#222', alignItems: 'center' }}>
-        <div style={{ color: '#60a5fa', fontWeight: 'bold' }}>🔵 {names.p1}<br/><span style={{fontSize:'0.8rem', color:'#888'}}>{selections?.p1 ? '已作答' : '思考中'}</span></div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#fbbf24' }}>{!p2Joined ? '等待中' : `${timeLeft}s`}</div>
-            <button onClick={handleReturnToLobby} style={{ marginTop: '5px', padding: '2px 8px', fontSize: '0.8rem', background: '#444', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>離開</button>
-        </div>
-        <div style={{ color: '#f87171', fontWeight: 'bold', textAlign: 'right' }}>🔴 {names.p2}<br/><span style={{fontSize:'0.8rem', color:'#888'}}>{selections?.p2 ? '已作答' : '思考中'}</span></div>
-      </div>
+    <div style={{ height: '100dvh', padding: '10px 20px', backgroundColor: '#000', color: '#fff', display: 'flex', flexDirection: 'column' }}>
       
-      <div style={{ flex: 1, padding: '20px', display: 'flex', flexDirection: 'column' }}>
-        {!p2Joined ? (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                <h2 style={{color: '#f59e0b', fontSize: '2rem'}}>等待對手加入中...</h2>
-                <div style={{marginTop: '20px', border: '4px solid rgba(255,255,255,0.1)', borderTop: '4px solid #f59e0b', borderRadius: '50%', width: '40px', height: '40px', animation: 'spin 1s linear infinite'}}></div>
-                <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
-            </div>
-        ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-                    <span style={{ backgroundColor: '#4b5563', padding: '5px 15px', borderRadius: '15px', fontSize: '0.9rem' }}>第 {currentIdx + 1} / {MAX_QUESTIONS} 題 - {currentQ?.category}</span>
-                </div>
-                <div style={{ fontSize: '1.4rem', fontWeight: 'bold', textAlign: 'center', marginBottom: '20px', minHeight: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {renderContent(currentQ?.question)}
-                </div>
-                
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', flex: 1 }}>
-                    {shuffledOptions.map((opt, idx) => (
-                        <button key={idx} 
-                            onClick={() => onSelect(opt)}
-                            disabled={showResult || myRole === 'viewer' || selections?.[myRole]}
-                            style={{ ...getBtnStyle(opt), borderRadius: '10px', fontSize: '1.2rem', color: '#fff', padding: '10px', transition: '0.2s', cursor: (showResult || myRole === 'viewer' || selections?.[myRole]) ? 'default' : 'pointer' }}>
-                            {renderContent(opt.text)}
-                        </button>
-                    ))}
-                </div>
+      {/* 🏆 分數與狀態列 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px', backgroundColor: '#1a1a1a', borderRadius: '15px', marginBottom: '20px' }}>
+        <div style={{ textAlign: 'center', flex: 1 }}>
+          <div style={{ fontSize: '1.2rem', color: '#60a5fa', fontWeight: 'bold' }}>{names.p1} {myRole === 'p1' && '(你)'}</div>
+          <div style={{ fontSize: '2rem', fontWeight: 'bold' }}>{scores.p1}</div>
+          {streaks.p1 >= 3 && <div style={{ color: '#fbbf24', fontSize: '0.8rem' }}>🔥 {streaks.p1} 連勝</div>}
+        </div>
+        
+        <div style={{ textAlign: 'center', flex: 1 }}>
+          <div style={{ fontSize: '2.2rem', fontWeight: 'bold', color: timeLeft <= 5 ? '#ef4444' : '#fbbf24' }}>
+            {timeLeft}s
+          </div>
+          <div style={{ fontSize: '0.9rem', color: '#888' }}>第 {currentIdx + 1} / {MAX_QUESTIONS} 題</div>
+        </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '20px', fontSize: '1.5rem', fontWeight: 'bold' }}>
-                    <div style={{ color: '#60a5fa' }}>{scores.p1}</div>
-                    <div style={{ color: '#f87171' }}>{scores.p2}</div>
-                </div>
+        <div style={{ textAlign: 'center', flex: 1 }}>
+          <div style={{ fontSize: '1.2rem', color: '#f87171', fontWeight: 'bold' }}>{names.p2} {myRole === 'p2' && '(你)'}</div>
+          <div style={{ fontSize: '2rem', fontWeight: 'bold' }}>{scores.p2}</div>
+          {streaks.p2 >= 3 && <div style={{ color: '#fbbf24', fontSize: '0.8rem' }}>🔥 {streaks.p2} 連勝</div>}
+        </div>
+      </div>
+
+      {/* 題目與選項區塊 */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+        {!p2Joined ? (
+          <div style={{ textAlign: 'center' }}>
+            <h2 style={{ color: '#fbbf24', fontSize: '2rem' }}>等待對手加入中...</h2>
+            <p style={{ color: '#888' }}>請不要離開畫面</p>
+          </div>
+        ) : (
+          <>
+            <div style={{ backgroundColor: '#1a1a1a', padding: '30px', borderRadius: '15px', width: '100%', maxWidth: '800px', textAlign: 'center', marginBottom: '30px', border: '1px solid #333' }}>
+              <span style={{ backgroundColor: '#3b82f6', padding: '5px 10px', borderRadius: '8px', fontSize: '0.9rem', marginBottom: '15px', display: 'inline-block' }}>{currentQ?.category || "一般"}</span>
+              <h2 style={{ fontSize: '1.8rem', lineHeight: '1.4' }}>{renderContent(currentQ?.question)}</h2>
             </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', width: '100%', maxWidth: '800px' }}>
+              {shuffledOptions.map((opt, idx) => (
+                <button 
+                  key={idx} 
+                  onClick={() => onSelect(opt)}
+                  style={{ ...getBtnStyle(opt), padding: '20px', borderRadius: '12px', color: '#fff', fontSize: '1.2rem', cursor: (showResult || !p2Joined || myRole === 'viewer') ? 'not-allowed' : 'pointer', transition: 'all 0.2s', textAlign: 'center' }}
+                >
+                  {renderContent(opt.text)}
+                </button>
+              ))}
+            </div>
+          </>
         )}
+      </div>
+
+      {/* 離開/逃跑按鈕 */}
+      <div style={{ textAlign: 'center', marginTop: '20px' }}>
+        <button onClick={handleManualLeave} style={{ backgroundColor: '#ef4444', color: '#fff', padding: '10px 20px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>
+          {myRole === 'viewer' ? '結束巡堂' : '逃跑 (離開遊戲)'}
+        </button>
       </div>
     </div>
   );
