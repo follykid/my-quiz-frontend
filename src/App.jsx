@@ -388,4 +388,13 @@ function App() {
   );
 }
 
-export default App;
+export default App;if (forfeitedBy) {
+    if (forfeitedBy === myRole) {
+        resultTitle = "🏃‍♂️ 你已逃跑，判定敗北！";
+        subMessage = "中途離開會被扣除 5 點能量喔！";
+        titleColor = "#ef4444";
+    } else {
+        resultTitle = "🎉 對手逃跑了！你獲勝了！ 🎉";
+        subMessage = "不戰而勝！對手已被扣除 5 點能量。";
+        titleColor = "#22c55e";
+    }
