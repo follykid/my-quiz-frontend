@@ -145,13 +145,38 @@ function ChatBoard({ currentUser }) {
 // 🌟 遊戲主程式 (App)
 // ==========================================
 const MAX_QUESTIONS = 10;
-// 這裡給定一個假的 questions 陣列避免報錯，請記得替換回您實際的題庫
-const questions = [
-  { question: "這是一道測試題", originalOptions: ["選項A", "選項B", "選項C", "選項D"], correctText: "選項A", category: "測試" }
-];
 
 function App() {
   const [user, setUser] = useState({ id: 'student_' + Math.floor(Math.random()*1000) }); 
+  // --- 🌟 讀取真實 CSV 題庫 ---
+  const [questions, setQuestions] = useState([]);
+
+  useEffect(() => {
+    Papa.parse("/data.csv", {
+      download: true,
+      header: true, // 假設您的 CSV 有標題列
+      skipEmptyLines: true,
+      complete: (results) => {
+        // 將讀取到的資料轉換成遊戲需要的格式
+        const loadedQuestions = results.data.map(row => ({
+          question: row["題目"] || row["Question"] || row.question || "",
+          originalOptions: [
+            row["選項A"] || row["A"] || row.optionA,
+            row["選項B"] || row["B"] || row.optionB,
+            row["選項C"] || row["C"] || row.optionC,
+            row["選項D"] || row["D"] || row.optionD
+          ].filter(Boolean), // 過濾掉空白的選項
+          correctText: row["答案"] || row["正確答案"] || row["Answer"] || row.answer || "",
+          category: row["分類"] || row["Category"] || row.category || "一般"
+        }));
+        setQuestions(loadedQuestions);
+      },
+      error: (err) => {
+        console.error("讀取題庫失敗，請檢查 data.csv 是否存在:", err);
+      }
+    });
+  }, []);
+  // ------------------------------
   const [roomId, setRoomId] = useState(null);
   const [myRole, setMyRole] = useState(null); 
   const [p2Joined, setP2Joined] = useState(false);
@@ -208,8 +233,8 @@ function App() {
 
     if (selections && selections[myRole]) return;
 
-    // if (opt.isCorrect) playSound('correct'); else playSound('wrong');
-    // set(ref(db, `rooms/${roomId}/selections/${myRole}`), { text: opt.text, isCorrect: opt.isCorrect, time: timeLeft });
+    if (opt.isCorrect) playSound('correct'); else playSound('wrong');
+    set(ref(db, `rooms/${roomId}/selections/${myRole}`), { text: opt.text, isCorrect: opt.isCorrect, time: timeLeft });
     console.log("答案已送出:", opt.text);
   };
 
@@ -218,7 +243,7 @@ function App() {
       setRoomId(null);
       setMyRole(null);
     } else {
-      // update(ref(db, `rooms/${roomId}`), { forfeitedBy: myRole, gameOver: true });
+      update(ref(db, `rooms/${roomId}`), { forfeitedBy: myRole, gameOver: true });
       alert("您選擇了逃跑！");
     }
   };
